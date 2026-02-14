@@ -212,8 +212,20 @@ function hydrateAxisLongDescriptions() {
     const axis = el.dataset.axisLong;
     const cfg = AXES[axis];
     const axisLong = axisDetailMap.get(axis) || cfg?.desc || "";
-    el.textContent = trim(axisLong, 520);
+    el.textContent = axisLead(axisLong, cfg?.desc || "");
   });
+}
+
+function axisLead(text, fallback = "") {
+  const src = (text || "").replace(/\s+/g, " ").trim();
+  if (!src) return fallback;
+
+  // 只取前1-2句导读，避免整段砸脸
+  const parts = src.split(/(?<=[。！？!?])/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return trim(src, 120);
+
+  const lead = parts.slice(0, 2).join("");
+  return trim(lead, 120);
 }
 
 function parseDoc(md) {
