@@ -1,16 +1,16 @@
 const AXES = {
-  W: { desc: "世界阻力：你们要对抗的外部环境", options: { "W1 铁律之笼": "规训社会/等级体系", "W2 废墟之野": "生存优先的崩坏世界", "W3 虚无之海": "精神层面的空洞", "W4 暗面之城": "表里双面、暗流涌动", "W5 未知之境": "共同探索未知", "W6 修罗之场": "零和竞争场" } },
+  W: { desc: "世界阻力：你们的感情会被什么外部环境卡住", options: { "W1 铁律之笼": "规矩大过天（家族/制度/等级）", "W2 废墟之野": "先活下去再谈爱（末日/战乱）", "W3 虚无之海": "日子正常但人心空掉了", "W4 暗面之城": "白天正常，夜里有秘密", "W5 未知之境": "一起闯未知地图", "W6 修罗之场": "你们在同一赛道竞争" } },
   B: { desc: "身体边界：他是什么存在", options: { "B1 凡人身体": "会衰老受伤", "B2 非人身体": "机械/妖灵/异质", "B3 超越肉体": "概念或系统级存在" } },
-  P: { desc: "力量类型：他的核心能量", options: { "P1 智力与制度": "资源/信息/规则能力", "P2 肉体与本能": "武力/本能/战斗", "P3 精神与信念": "意志与灵魂强度" } },
+  P: { desc: "力量类型：他主要靠什么变强", options: { "P1 智力与制度": "靠脑子、资源和规则网络", "P2 肉体与本能": "靠身体素质和战斗本能", "P3 精神与信念": "靠意志力和信念扛住一切" } },
   R: { desc: "立场关系：他如何使用力量", options: { "R1 秩序守卫者": "维护规则", "R2 秩序破坏者": "挑战规则", "R3 被秩序抛弃": "体系外流亡者" } },
   M: { desc: "动机支柱：他为何而活", options: { "M1 外部使命": "被赋予任务", "M2 创伤执念": "被过去劫持", "M3 自发觉醒": "主动选择活与爱", "M4 野心神化": "追逐登顶" } },
-  C: { desc: "信念动摇时的反应", options: { "C1 坚守至击碎": "先抗拒后崩裂", "C2 计算后失灵": "理性体系被爱击穿", "C3 无条件选你": "本能优先于规则" } },
+  C: { desc: "信念动摇时：他到底怎么选", options: { "C1 坚守至击碎": "先死扛原则，最后被现实打碎", "C2 计算后失灵": "本来很理性，但在你这里算不明白", "C3 无条件选你": "不管后果，第一反应永远是你" } },
   E: { desc: "感情表达方式", options: { "E1 冰山闷骚": "嘴硬手软", "E2 风流撩拨": "语言高手", "E3 直球懵懂": "真诚不过滤", "E4 占有标记": "独占式表达", "E5 照料爹系": "日常细节守护" } },
   J: { desc: "共情能力", options: { "J1 完全不懂": "情感盲区", "J2 努力学习": "笨拙但认真", "J3 比人更懂人": "超越常规定义" } },
   S: { desc: "精神稳定度", options: { "S1 极稳": "冷静如磐石", "S2 有裂痕": "撑着不崩", "S3 已崩坏": "逻辑失序" } },
   D: { desc: "关系权力结构", options: { "D1 他在上位": "高位者低头", "D2 他在下位": "下位者越界", "D3 势均力敌": "对抗式亲密" } },
-  V: { desc: "他如何看你", options: { "V1 你是锚点": "唯一真实", "V2 你是药": "依赖性救赎", "V3 你是劫数": "失控源头", "V4 你是猎物": "从利用到在乎" } },
-  L: { desc: "爱的真伪", options: { "L1 爱真实你": "穿透滤镜", "L2 爱你的功能": "工具性依赖", "L3 爱脑补的你": "想象投射" } },
+  V: { desc: "在他眼里，你到底是什么", options: { "V1 你是锚点": "你让他觉得世界是真的", "V2 你是药": "没有你他会失控", "V3 你是劫数": "你是他最大软肋", "V4 你是猎物": "一开始是利用，后来变在乎" } },
+  L: { desc: "他爱的是你本人，还是你带来的作用", options: { "L1 爱真实你": "接受你真实且不完美的样子", "L2 爱你的功能": "离不开你能提供的价值", "L3 爱脑补的你": "爱的是他想象中的你" } },
   A: { desc: "致命软肋", options: { "A1 系于一物": "关键载体", "A2 系于一人": "你即开关", "A3 系于一念": "信念崩塌即瓦解" } },
   T: { desc: "时间施加的刀", options: { "T1 寿命差": "预支悲伤", "T2 时间循环": "单向记忆负担", "T3 时空错位": "认知断层", "T4 记忆侵蚀": "渐进遗忘" } },
   G: { desc: "可对抗命运的范围", options: { "G1 个体级": "只能救局部", "G2 规则级": "可改制度", "G3 因果级": "可改世界底层" } },
@@ -223,6 +223,7 @@ function parseDoc(md) {
 
   let currentAxis = null;
   let axisBuffer = [];
+  let seenOptionInAxis = false;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -230,29 +231,40 @@ function parseDoc(md) {
 
     const axisHead = /^###\s+([A-Z])\s*=/.exec(line);
     if (axisHead) {
-      if (currentAxis && axisBuffer.length) axisMap.set(currentAxis, cleanMarkdown(axisBuffer.join("\n")));
+      if (currentAxis && axisBuffer.length) {
+        axisMap.set(currentAxis, cleanMarkdown(axisBuffer.join("\n")));
+      }
       currentAxis = axisHead[1];
       axisBuffer = [];
+      seenOptionInAxis = false;
       continue;
     }
 
     const opt = /^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.exec(line);
     if (opt) {
+      seenOptionInAxis = true;
       const code = opt[1];
       const buf = [];
-      for (let j = i + 1; j < lines.length; j++) {
+      let j = i + 1;
+      for (; j < lines.length; j++) {
         const n = lines[j].trim();
         if (/^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.test(n) || /^###\s+[A-Z]\s*=/.test(n) || /^##\s+/.test(n)) break;
         if (n === "---") continue;
         buf.push(lines[j]);
       }
       optionMap.set(code, cleanMarkdown(buf.join("\n")));
+      i = j - 1;
+      continue;
     }
 
-    if (currentAxis && line && !/^\*\*[A-Z]\d/.test(line)) axisBuffer.push(raw);
+    if (currentAxis && !seenOptionInAxis && line) {
+      axisBuffer.push(raw);
+    }
   }
 
-  if (currentAxis && axisBuffer.length) axisMap.set(currentAxis, cleanMarkdown(axisBuffer.join("\n")));
+  if (currentAxis && axisBuffer.length) {
+    axisMap.set(currentAxis, cleanMarkdown(axisBuffer.join("\n")));
+  }
   return { optionMap, axisMap };
 }
 
