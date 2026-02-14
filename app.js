@@ -35,6 +35,7 @@ const selectedCountEl = document.getElementById("selectedCount");
 const clearBtn = document.getElementById("clearBtn");
 const generateBtn = document.getElementById("generateBtn");
 const regenBtn = document.getElementById("regenBtn");
+const copyBtn = document.getElementById("copyBtn");
 const resultEl = document.getElementById("result");
 const statusEl = document.getElementById("status");
 
@@ -57,6 +58,7 @@ modelInput.addEventListener("change", () => {
 clearBtn.addEventListener("click", clearSelections);
 generateBtn.addEventListener("click", () => generate(false));
 regenBtn.addEventListener("click", () => generate(true));
+copyBtn.addEventListener("click", copyResult);
 
 function renderAxes() {
   Object.entries(AXES).forEach(([axisName, options]) => {
@@ -154,4 +156,19 @@ function setLoading(loading) {
 function setStatus(text, isError) {
   statusEl.textContent = text;
   statusEl.style.color = isError ? "#ff7b7b" : "#a9afc3";
+}
+
+async function copyResult() {
+  const text = resultEl.textContent?.trim();
+  if (!text) {
+    setStatus("当前没有可复制内容。", true);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("已复制到剪贴板。", false);
+  } catch {
+    setStatus("复制失败，请手动复制。", true);
+  }
 }
