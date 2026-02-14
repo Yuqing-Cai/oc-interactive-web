@@ -75,9 +75,15 @@ const extraPromptInput = document.getElementById("extraPrompt");
 const selectedExplainEl = document.getElementById("selectedExplain");
 const insightPanel = document.getElementById("insightPanel");
 const mobileInsightToggle = document.getElementById("mobileInsightToggle");
+const themeSelect = document.getElementById("themeSelect");
 
 apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
 modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
+const savedTheme = localStorage.getItem("oc_theme") || "cyan";
+if (themeSelect) {
+  themeSelect.value = savedTheme;
+  applyTheme(savedTheme);
+}
 
 let optionDetailMap = new Map(); // P2 => long text
 
@@ -92,6 +98,13 @@ generateBtn.addEventListener("click", () => generate(false));
 regenBtn.addEventListener("click", () => generate(true));
 copyBtn.addEventListener("click", copyResult);
 mobileInsightToggle.addEventListener("click", () => insightPanel.classList.toggle("open"));
+if (themeSelect) {
+  themeSelect.addEventListener("change", () => {
+    const v = themeSelect.value;
+    localStorage.setItem("oc_theme", v);
+    applyTheme(v);
+  });
+}
 
 function renderAxes() {
   Object.entries(AXES).forEach(([axisName, cfg]) => {
@@ -316,6 +329,11 @@ function cleanMarkdown(str) {
     .replace(/^\s*---\s*$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function applyTheme(name) {
+  document.body.classList.remove("theme-green", "theme-yellow", "theme-pink", "theme-red", "theme-purple", "theme-orange");
+  if (name && name !== "cyan") document.body.classList.add(`theme-${name}`);
 }
 
 function escapeHtml(str = "") {

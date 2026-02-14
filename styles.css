@@ -1,15 +1,18 @@
 :root {
   font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --bg: #090b12;
+  --bg-accent: #1a1040;
   --panel: rgba(12, 17, 30, 0.9);
   --line: #273255;
   --text: #d7e2ff;
   --muted: #8fa4cf;
   --neon: #00e7ff;
+  --grad-a: #2a4dff;
+  --grad-b: #8b39ff;
 }
 * { box-sizing: border-box; }
-body { margin: 0; color: var(--text); background: radial-gradient(circle at 20% 10%, #1a1040 0%, var(--bg) 42%); }
-.bg-grid { position: fixed; inset: 0; background-image: linear-gradient(rgba(0,231,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,231,255,.05) 1px, transparent 1px); background-size: 26px 26px; pointer-events: none; }
+body { margin: 0; color: var(--text); background: radial-gradient(circle at 20% 10%, var(--bg-accent) 0%, var(--bg) 42%); }
+.bg-grid { position: fixed; inset: 0; background-image: linear-gradient(color-mix(in srgb, var(--neon), transparent 92%) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--neon), transparent 92%) 1px, transparent 1px); background-size: 26px 26px; pointer-events: none; }
 .shell { max-width: 1460px; margin: 0 auto; padding: 16px; position: relative; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(8px); box-shadow: 0 0 0 1px rgba(0,231,255,.12), 0 10px 30px rgba(0,0,0,.4); }
 .hero { padding: 18px; margin-bottom: 14px; }
@@ -25,7 +28,7 @@ body { margin: 0; color: var(--text); background: radial-gradient(circle at 20% 
 .config-grid { display: grid; grid-template-columns: 1fr 220px; gap: 10px; }
 label { display: grid; gap: 6px; font-size: 13px; margin-top: 8px; }
 input, textarea, button { background: #0b1121; border: 1px solid #32415f; color: var(--text); border-radius: 10px; padding: 10px; font-size: 14px; }
-button { cursor: pointer; border: 1px solid transparent; background: linear-gradient(90deg,#2a4dff,#8b39ff); font-weight: 600; }
+button { cursor: pointer; border: 1px solid transparent; background: linear-gradient(90deg,var(--grad-a),var(--grad-b)); font-weight: 600; }
 button.ghost { background: transparent; border: 1px solid #385487; }
 .axis-container { display: grid; gap: 10px; margin-top: 8px; }
 .axis-group { border: 1px solid #2d3b5f; border-radius: 12px; padding: 10px; background: rgba(10,15,28,.82); }
@@ -52,6 +55,15 @@ button.ghost { background: transparent; border: 1px solid #385487; }
   .mobile-toggle { display:block; position: fixed; right: 12px; bottom: 12px; z-index: 30; }
   .selected-explain { max-height: 18vh; }
 }
+.theme-picker { min-width: 170px; }
+
+body.theme-green { --neon:#39ff88; --bg-accent:#0d2b1f; --grad-a:#1fa85c; --grad-b:#52ff9e; }
+body.theme-yellow { --neon:#ffe95b; --bg-accent:#2e2608; --grad-a:#c7a500; --grad-b:#ffe15c; }
+body.theme-pink { --neon:#ff4ec9; --bg-accent:#2b0d24; --grad-a:#d33ba4; --grad-b:#ff66d3; }
+body.theme-red { --neon:#ff4a4a; --bg-accent:#300c13; --grad-a:#c6283d; --grad-b:#ff5f5f; }
+body.theme-purple { --neon:#b16bff; --bg-accent:#201038; --grad-a:#6b3dd1; --grad-b:#bb7cff; }
+body.theme-orange { --neon:#ff9a3d; --bg-accent:#2b1407; --grad-a:#d46b1f; --grad-b:#ffb25e; }
+
 @media (max-width: 720px) {
   .config-grid { grid-template-columns: 1fr; }
   .options { grid-template-columns: 1fr; }
