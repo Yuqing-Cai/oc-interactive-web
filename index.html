@@ -3,64 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OC 互动生成器</title>
+    <title>OC Genesis Console</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="container">
-      <header>
-        <h1>OC 男主初始状态生成器</h1>
-        <p class="muted">
-          从 OC 轴里自由选项（至少 3 项），生成一个静态初始设定。
-        </p>
+    <div class="bg-grid"></div>
+    <main class="shell">
+      <header class="hero panel">
+        <p class="kicker">WORLD FORGE // OC GENESIS CONSOLE</p>
+        <h1>男主初始状态生成器</h1>
+        <p class="muted">选择至少 3 项轴要素，召唤一个静态初始设定。右侧可动态查阅完整 OC 文档。</p>
       </header>
 
-      <section class="card">
-        <h2>连接设置</h2>
-        <div class="config-grid">
-          <label>
-            Worker API 地址
-            <input id="apiUrl" type="url" placeholder="https://your-worker.workers.dev/generate" />
-          </label>
-          <label>
-            模型名（可改）
-            <input id="model" type="text" value="MiniMax-M2.5" />
-          </label>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="section-head">
-          <h2>选择轴要素</h2>
-          <div>
-            <span id="selectedCount">已选 0 项</span>
-            <button id="clearBtn" type="button" class="ghost">清空</button>
+      <div class="layout">
+        <section class="panel left">
+          <div class="section-head">
+            <h2>连接配置</h2>
           </div>
-        </div>
-        <div id="axisContainer" class="axis-container"></div>
-      </section>
+          <div class="config-grid">
+            <label>
+              Worker API 地址
+              <input id="apiUrl" type="url" placeholder="https://xxx.workers.dev/generate" />
+            </label>
+            <label>
+              模型名
+              <input id="model" type="text" value="MiniMax-M2.5" />
+            </label>
+          </div>
 
-      <section class="card">
-        <h2>补充偏好（可选）</h2>
-        <label>
-          你希望的语气/强度
-          <textarea id="extraPrompt" rows="3" placeholder="例如：偏克制、带一点危险感；开场场景不要太长。"></textarea>
-        </label>
-      </section>
+          <div class="section-head top-gap">
+            <h2>轴选择面板</h2>
+            <div class="row-actions">
+              <span id="selectedCount" class="chip">已选 0 项</span>
+              <button id="clearBtn" type="button" class="ghost">清空</button>
+            </div>
+          </div>
+          <div id="axisContainer" class="axis-container"></div>
 
-      <section class="actions">
-        <button id="generateBtn" type="button">生成初始剧本</button>
-        <button id="regenBtn" type="button" class="ghost">重新生成</button>
-      </section>
+          <h2 class="top-gap">补充偏好（可选）</h2>
+          <label>
+            风格/限制
+            <textarea id="extraPrompt" rows="3" placeholder="例如：男主更强势；开场要有压迫感；避免过长抒情。"></textarea>
+          </label>
 
-      <section class="card">
-        <div class="section-head">
-          <h2>生成结果</h2>
-          <button id="copyBtn" type="button" class="ghost">一键复制</button>
-        </div>
-        <p id="status" class="muted">等待生成…</p>
-        <article id="result" class="result"></article>
-      </section>
+          <div class="actions">
+            <button id="generateBtn" type="button">生成初始剧本</button>
+            <button id="regenBtn" type="button" class="ghost">重新生成</button>
+          </div>
+
+          <div class="result-panel">
+            <div class="section-head">
+              <h2>生成结果</h2>
+              <button id="copyBtn" type="button" class="ghost">一键复制</button>
+            </div>
+            <p id="status" class="muted">等待生成…</p>
+            <article id="result" class="result"></article>
+          </div>
+        </section>
+
+        <aside class="panel right">
+          <div class="section-head">
+            <h2>OC 全文交互检索</h2>
+          </div>
+          <label>
+            搜索关键词
+            <input id="docSearch" type="text" placeholder="搜索：例如 神权 / C轴 / 赛博美学" />
+          </label>
+          <div class="doc-layout">
+            <nav id="docToc" class="doc-toc"></nav>
+            <article id="docContent" class="doc-content"></article>
+          </div>
+        </aside>
+      </div>
     </main>
 
     <script src="./app.js"></script>
