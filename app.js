@@ -40,7 +40,8 @@ const mobileInsightToggle = document.getElementById("mobileInsightToggle");
 apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
 modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
 
-let optionDetailMap = new Map();
+let optionDetailMap = new Map(); // key: P2
+let axisDetailMap = new Map(); // key: P
 let activeAxis = "W";
 let pinned = [];
 
@@ -78,9 +79,10 @@ function renderAxes() {
 
     Object.entries(cfg.options).forEach(([opt, detail], index) => {
       const id = `${axisName}-${index}`;
+      const code = getCode(opt);
       const label = document.createElement("label");
       label.className = "option-item";
-      label.innerHTML = `<div class="option-name"><input type="checkbox" data-axis="${axisName}" value="${opt}" id="${id}" /><span>${opt}</span></div><div class="option-desc">${detail}</div>`;
+      label.innerHTML = `<div class="option-name"><input type="checkbox" data-axis="${axisName}" data-code="${code}" value="${opt}" id="${id}" /><span>${opt}</span></div><div class="option-desc">${detail}</div>`;
       optionsWrap.appendChild(label);
     });
 
@@ -88,10 +90,20 @@ function renderAxes() {
     axisContainer.appendChild(group);
   });
 
-  axisContainer.addEventListener("change", () => {
+  axisContainer.addEventListener("change", (e) => {
+    if (e.target?.matches("input[type='checkbox']") && e.target.checked) {
+      enforceSingleSelection(e.target);
+    }
     updateSelectedCount();
     renderSelectedExplain(getSelected());
     renderCurrentAxisInfo();
+  });
+}
+
+function enforceSingleSelection(target) {
+  const axis = target.dataset.axis;
+  axisContainer.querySelectorAll(`input[type='checkbox'][data-axis='${axis}']`).forEach((cb) => {
+    if (cb !== target) cb.checked = false;
   });
 }
 
@@ -114,7 +126,7 @@ function highlightActiveAxis() {
 }
 
 function getSelected() {
-  return Array.from(axisContainer.querySelectorAll("input[type='checkbox']:checked")).map((item) => ({ axis: item.dataset.axis, option: item.value }));
+  return Array.from(axisContainer.querySelectorAll("input[type='checkbox']:checked")).map((item) => ({ axis: item.dataset.axis, option: item.value, code: item.dataset.code }));
 }
 
 function updateSelectedCount() {
@@ -133,13 +145,17 @@ function clearSelections() {
 function renderCurrentAxisInfo() {
   const cfg = AXES[activeAxis];
   if (!cfg) return;
+
+  const axisLong = axisDetailMap.get(activeAxis) || cfg.desc;
   const selectedOnAxis = getSelected().filter((s) => s.axis === activeAxis);
 
-  const selectedHtml = selectedOnAxis.length
-    ? selectedOnAxis.map((it) => `<section class="explain-card"><h4>${escapeHtml(it.option)}</h4><p>${escapeHtml(getOptionLong(it.option, 420))}</p></section>`).join("")
-    : `<section class="explain-card"><h4>${activeAxis} 轴</h4><p>${escapeHtml(cfg.desc)}\n\n你还没选这个轴。勾选后这里会出现对应产品卡解释。</p></section>`;
+  const topCard = `<section class="explain-card"><h4>${activeAxis === "Palette" ? "调色板" : `${activeAxis} 轴`}</h4><p>${escapeHtml(trim(axisLong, 500))}</p></section>`;
 
-  currentAxisInfoEl.innerHTML = selectedHtml;
+  const selectedCards = selectedOnAxis.length
+    ? selectedOnAxis.map((it) => `<section class="explain-card"><h4>${escapeHtml(it.option)}</h4><p>${escapeHtml(getOptionLong(it.code, 420))}</p></section>`).join("")
+    : `<section class="explain-card"><h4>未选择该轴</h4><p>你还没选这个轴。勾选后这里会出现对应产品卡解释。</p></section>`;
+
+  currentAxisInfoEl.innerHTML = topCard + selectedCards;
 }
 
 function renderSelectedExplain(selected) {
@@ -150,33 +166,31 @@ function renderSelectedExplain(selected) {
 
   selectedExplainEl.innerHTML = selected.map((item) => {
     const short = AXES[item.axis]?.options?.[item.option] || "";
-    const pinnedMark = pinned.includes(item.option);
+    const pinKey = `${item.axis}:${item.code}`;
+    const pinnedMark = pinned.includes(pinKey);
     return `<section class="explain-card">
-      <h4>${escapeHtml(item.option)}
-        <button class="pin-btn" data-pin="${escapeHtml(item.option)}">${pinnedMark ? "取消固定" : "固定对比"}</button>
-      </h4>
+      <h4>${escapeHtml(item.option)} <button class="pin-btn" data-pin="${pinKey}">${pinnedMark ? "取消固定" : "固定对比"}</button></h4>
       ${short ? `<p><strong>速览：</strong>${escapeHtml(short)}</p>` : ""}
-      <p>${escapeHtml(getOptionLong(item.option, 320))}</p>
+      <p>${escapeHtml(getOptionLong(item.code, 320))}</p>
     </section>`;
   }).join("");
 
   selectedExplainEl.querySelectorAll("[data-pin]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
-      const key = e.currentTarget.dataset.pin;
-      togglePin(key);
+      togglePin(e.currentTarget.dataset.pin);
       renderSelectedExplain(getSelected());
       renderComparePanel();
     });
   });
 }
 
-function togglePin(option) {
-  if (pinned.includes(option)) {
-    pinned = pinned.filter((x) => x !== option);
-    return;
+function togglePin(key) {
+  if (pinned.includes(key)) {
+    pinned = pinned.filter((x) => x !== key);
+  } else {
+    if (pinned.length >= 2) pinned.shift();
+    pinned.push(key);
   }
-  if (pinned.length >= 2) pinned.shift();
-  pinned.push(option);
 }
 
 function renderComparePanel() {
@@ -185,11 +199,18 @@ function renderComparePanel() {
     return;
   }
 
-  comparePanelEl.innerHTML = pinned.map((opt) => `<section class="explain-card"><h4>${escapeHtml(opt)}</h4><p>${escapeHtml(getOptionLong(opt, 260))}</p></section>`).join("");
+  comparePanelEl.innerHTML = pinned.map((key) => {
+    const [, code] = key.split(":");
+    return `<section class="explain-card"><h4>${escapeHtml(key.replace(":", " / "))}</h4><p>${escapeHtml(getOptionLong(code, 260))}</p></section>`;
+  }).join("");
 }
 
-function getOptionLong(optionKey, max = 500) {
-  const text = optionDetailMap.get(optionKey) || "该选项暂无长文本，已使用系统摘要。";
+function getOptionLong(code, max = 500) {
+  const text = optionDetailMap.get(code) || "该选项暂无对应长文本，已采用系统短解释。";
+  return trim(text, max);
+}
+
+function trim(text, max) {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
@@ -197,7 +218,7 @@ async function generate(isRegenerate) {
   const apiUrl = apiUrlInput.value.trim();
   const model = modelInput.value.trim() || "MiniMax-M2.5";
   const extraPrompt = extraPromptInput.value.trim();
-  const selections = getSelected();
+  const selections = getSelected().map(({ axis, option }) => ({ axis, option }));
 
   if (!apiUrl) return setStatus("请先填写 Worker API 地址。", true);
   if (selections.length < 3) return setStatus("至少选择 3 项轴要素。", true);
@@ -245,7 +266,9 @@ async function copyResult() {
 async function loadDocForExplanations() {
   try {
     const md = await fetch("./OC.md").then((r) => r.text());
-    optionDetailMap = buildOptionDetailMap(md);
+    const parsed = parseDoc(md);
+    optionDetailMap = parsed.optionMap;
+    axisDetailMap = parsed.axisMap;
     renderCurrentAxisInfo();
     renderSelectedExplain(getSelected());
     renderComparePanel();
@@ -255,31 +278,60 @@ async function loadDocForExplanations() {
   }
 }
 
-function buildOptionDetailMap(md) {
-  const map = new Map();
+function parseDoc(md) {
   const lines = md.split("\n");
+  const optionMap = new Map();
+  const axisMap = new Map();
+
+  let currentAxis = null;
+  let axisBuffer = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const m = /^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.exec(line);
-    if (!m) continue;
+    const raw = lines[i];
+    const line = raw.trim();
 
-    const key = `${m[1].trim()} ${cleanMarkdown(m[2].trim())}`;
-    const content = [];
-    for (let j = i + 1; j < lines.length; j++) {
-      const next = lines[j].trim();
-      if (/^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.test(next) || /^(#{1,3})\s+/.test(next)) break;
-      if (next === "---") continue;
-      content.push(lines[j]);
+    const axisHead = /^###\s+([A-Z])\s*=/.exec(line);
+    if (axisHead) {
+      if (currentAxis && axisBuffer.length) axisMap.set(currentAxis, cleanMarkdown(axisBuffer.join("\n")));
+      currentAxis = axisHead[1];
+      axisBuffer = [];
+      continue;
     }
-    const text = cleanMarkdown(content.join("\n")).trim();
-    if (text) map.set(key, text);
+
+    const opt = /^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.exec(line);
+    if (opt) {
+      const code = opt[1];
+      const buf = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const n = lines[j].trim();
+        if (/^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.test(n) || /^###\s+[A-Z]\s*=/.test(n) || /^##\s+/.test(n)) break;
+        if (n === "---") continue;
+        buf.push(lines[j]);
+      }
+      optionMap.set(code, cleanMarkdown(buf.join("\n")));
+    }
+
+    if (currentAxis && line && !/^\*\*[A-Z]\d/.test(line)) axisBuffer.push(raw);
   }
-  return map;
+
+  if (currentAxis && axisBuffer.length) axisMap.set(currentAxis, cleanMarkdown(axisBuffer.join("\n")));
+  return { optionMap, axisMap };
+}
+
+function getCode(optionLabel = "") {
+  const m = /^([A-Z]\d)/.exec(optionLabel.trim());
+  return m ? m[1] : optionLabel;
 }
 
 function cleanMarkdown(str) {
-  return str.replace(/^\s*[-*+]\s+/gm, "").replace(/\*\*/g, "").replace(/`/g, "").replace(/^\s*---\s*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  return str
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\|.*\|\s*$/gm, "")
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/^\s*---\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function escapeHtml(str = "") {
