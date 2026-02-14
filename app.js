@@ -30,25 +30,19 @@ const statusEl = document.getElementById("status");
 const apiUrlInput = document.getElementById("apiUrl");
 const modelInput = document.getElementById("model");
 const extraPromptInput = document.getElementById("extraPrompt");
-const currentAxisInfoEl = document.getElementById("currentAxisInfo");
 const selectedExplainEl = document.getElementById("selectedExplain");
-const comparePanelEl = document.getElementById("comparePanel");
-const activeAxisBadgeEl = document.getElementById("activeAxisBadge");
 const insightPanel = document.getElementById("insightPanel");
 const mobileInsightToggle = document.getElementById("mobileInsightToggle");
 
 apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
 modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
 
-let optionDetailMap = new Map(); // key: P2
-let axisDetailMap = new Map(); // key: P
-let activeAxis = "W";
-let pinned = [];
+let optionDetailMap = new Map(); // P2 => long text
+let axisDetailMap = new Map(); // P => long text
 
 renderAxes();
 updateSelectedCount();
 loadDocForExplanations();
-setupAxisObserver();
 
 apiUrlInput.addEventListener("change", () => localStorage.setItem("oc_api_url", apiUrlInput.value.trim()));
 modelInput.addEventListener("change", () => localStorage.setItem("oc_model", modelInput.value.trim()));
@@ -67,12 +61,15 @@ function renderAxes() {
     const head = document.createElement("div");
     head.className = "axis-head";
     head.innerHTML = `<h3>${axisName === "Palette" ? "调色板" : `${axisName} 轴`}</h3><span class="chip">${Object.keys(cfg.options).length}项</span>`;
-    group.appendChild(head);
 
     const desc = document.createElement("p");
     desc.className = "axis-desc";
     desc.textContent = cfg.desc;
-    group.appendChild(desc);
+
+    const long = document.createElement("p");
+    long.className = "axis-desc axis-long";
+    long.dataset.axisLong = axisName;
+    long.textContent = "正在加载该轴详细解释...";
 
     const optionsWrap = document.createElement("div");
     optionsWrap.className = "options";
@@ -86,6 +83,9 @@ function renderAxes() {
       optionsWrap.appendChild(label);
     });
 
+    group.appendChild(head);
+    group.appendChild(desc);
+    group.appendChild(long);
     group.appendChild(optionsWrap);
     axisContainer.appendChild(group);
   });
@@ -96,7 +96,6 @@ function renderAxes() {
     }
     updateSelectedCount();
     renderSelectedExplain(getSelected());
-    renderCurrentAxisInfo();
   });
 }
 
@@ -105,24 +104,6 @@ function enforceSingleSelection(target) {
   axisContainer.querySelectorAll(`input[type='checkbox'][data-axis='${axis}']`).forEach((cb) => {
     if (cb !== target) cb.checked = false;
   });
-}
-
-function setupAxisObserver() {
-  const observer = new IntersectionObserver((entries) => {
-    const hit = entries.find((e) => e.isIntersecting);
-    if (!hit) return;
-    activeAxis = hit.target.dataset.axis;
-    highlightActiveAxis();
-    renderCurrentAxisInfo();
-  }, { threshold: 0.35 });
-
-  document.querySelectorAll(".axis-group").forEach((el) => observer.observe(el));
-  highlightActiveAxis();
-}
-
-function highlightActiveAxis() {
-  document.querySelectorAll(".axis-group").forEach((el) => el.classList.toggle("active-axis", el.dataset.axis === activeAxis));
-  activeAxisBadgeEl.textContent = activeAxis === "Palette" ? "调色板" : `${activeAxis} 轴`;
 }
 
 function getSelected() {
@@ -135,73 +116,23 @@ function updateSelectedCount() {
 
 function clearSelections() {
   axisContainer.querySelectorAll("input[type='checkbox']").forEach((input) => (input.checked = false));
-  pinned = [];
   updateSelectedCount();
   renderSelectedExplain([]);
-  renderComparePanel();
-  renderCurrentAxisInfo();
-}
-
-function renderCurrentAxisInfo() {
-  const cfg = AXES[activeAxis];
-  if (!cfg) return;
-
-  const axisLong = axisDetailMap.get(activeAxis) || cfg.desc;
-  const selectedOnAxis = getSelected().filter((s) => s.axis === activeAxis);
-
-  const topCard = `<section class="explain-card"><h4>${activeAxis === "Palette" ? "调色板" : `${activeAxis} 轴`}</h4><p>${escapeHtml(trim(axisLong, 500))}</p></section>`;
-
-  const selectedCards = selectedOnAxis.length
-    ? selectedOnAxis.map((it) => `<section class="explain-card"><h4>${escapeHtml(it.option)}</h4><p>${escapeHtml(getOptionLong(it.code, 420))}</p></section>`).join("")
-    : `<section class="explain-card"><h4>未选择该轴</h4><p>你还没选这个轴。勾选后这里会出现对应产品卡解释。</p></section>`;
-
-  currentAxisInfoEl.innerHTML = topCard + selectedCards;
 }
 
 function renderSelectedExplain(selected) {
   if (!selected.length) {
-    selectedExplainEl.innerHTML = `<p class="muted">还没有选中轴要素。先勾选，卡片会即时出现。</p>`;
+    selectedExplainEl.innerHTML = `<p class="muted">还没有选中轴要素。先勾选，右侧会实时显示对应细分解释。</p>`;
     return;
   }
 
   selectedExplainEl.innerHTML = selected.map((item) => {
     const short = AXES[item.axis]?.options?.[item.option] || "";
-    const pinKey = `${item.axis}:${item.code}`;
-    const pinnedMark = pinned.includes(pinKey);
     return `<section class="explain-card">
-      <h4>${escapeHtml(item.option)} <button class="pin-btn" data-pin="${pinKey}">${pinnedMark ? "取消固定" : "固定对比"}</button></h4>
+      <h4>${escapeHtml(item.option)}</h4>
       ${short ? `<p><strong>速览：</strong>${escapeHtml(short)}</p>` : ""}
-      <p>${escapeHtml(getOptionLong(item.code, 320))}</p>
+      <p>${escapeHtml(getOptionLong(item.code, 420))}</p>
     </section>`;
-  }).join("");
-
-  selectedExplainEl.querySelectorAll("[data-pin]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      togglePin(e.currentTarget.dataset.pin);
-      renderSelectedExplain(getSelected());
-      renderComparePanel();
-    });
-  });
-}
-
-function togglePin(key) {
-  if (pinned.includes(key)) {
-    pinned = pinned.filter((x) => x !== key);
-  } else {
-    if (pinned.length >= 2) pinned.shift();
-    pinned.push(key);
-  }
-}
-
-function renderComparePanel() {
-  if (!pinned.length) {
-    comparePanelEl.innerHTML = `<p class="muted">在上面的要素卡点击“固定对比”，最多固定2项。</p>`;
-    return;
-  }
-
-  comparePanelEl.innerHTML = pinned.map((key) => {
-    const [, code] = key.split(":");
-    return `<section class="explain-card"><h4>${escapeHtml(key.replace(":", " / "))}</h4><p>${escapeHtml(getOptionLong(code, 260))}</p></section>`;
   }).join("");
 }
 
@@ -269,13 +200,20 @@ async function loadDocForExplanations() {
     const parsed = parseDoc(md);
     optionDetailMap = parsed.optionMap;
     axisDetailMap = parsed.axisMap;
-    renderCurrentAxisInfo();
+    hydrateAxisLongDescriptions();
     renderSelectedExplain(getSelected());
-    renderComparePanel();
   } catch {
-    currentAxisInfoEl.innerHTML = `<p class="muted">OC.md 加载失败，暂时使用短解释。</p>`;
-    renderComparePanel();
+    renderSelectedExplain(getSelected());
   }
+}
+
+function hydrateAxisLongDescriptions() {
+  document.querySelectorAll("[data-axis-long]").forEach((el) => {
+    const axis = el.dataset.axisLong;
+    const cfg = AXES[axis];
+    const axisLong = axisDetailMap.get(axis) || cfg?.desc || "";
+    el.textContent = trim(axisLong, 520);
+  });
 }
 
 function parseDoc(md) {
