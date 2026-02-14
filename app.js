@@ -1,3 +1,24 @@
+const AXIS_LABELS = {
+  W: "W = World（世界）",
+  B: "B = Body（躯壳）",
+  P: "P = Power（力量）",
+  R: "R = Role（立场）",
+  M: "M = Motive（动机）",
+  C: "C = Choice（抉择）",
+  E: "E = Expression（表达）",
+  J: "J = Judgment（共情）",
+  S: "S = Sanity（心智）",
+  D: "D = Dynamic（权力）",
+  V: "V = View（凝视）",
+  L: "L = Love（真伪）",
+  A: "A = Achilles（软肋）",
+  T: "T = Time（时间）",
+  G: "G = God-mode（神权）",
+  X: "X = eXchange（代价）",
+  F: "F = Finale（终局）",
+  Palette: "调色板（美学风格）",
+};
+
 const AXES = {
   W: { desc: "世界阻力", options: { "W1 铁律之笼": "规矩大过天（家族/制度/等级）", "W2 废墟之野": "先活下去再谈爱（末日/战乱）", "W3 虚无之海": "日子正常但人心空掉了", "W4 暗面之城": "白天正常，夜里有秘密", "W5 未知之境": "一起闯未知地图", "W6 修罗之场": "你们在同一赛道竞争" } },
   B: { desc: "身体边界", options: { "B1 凡人身体": "会衰老受伤", "B2 非人身体": "机械/妖灵/异质", "B3 超越肉体": "概念或系统级存在" } },
@@ -80,7 +101,7 @@ function renderAxes() {
 
     const head = document.createElement("div");
     head.className = "axis-head";
-    head.innerHTML = `<h3>${axisName === "Palette" ? "调色板" : `${axisName} 轴`}</h3><span class="chip">${Object.keys(cfg.options).length}项</span>`;
+    head.innerHTML = `<h3>${AXIS_LABELS[axisName] || axisName}</h3><span class="chip">${Object.keys(cfg.options).length}项</span>`;
 
     const long = document.createElement("p");
     long.className = "axis-desc axis-long";
