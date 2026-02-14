@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OC 互动生成器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>OC 男主初始状态生成器</h1>
+        <p class="muted">
+          从 OC 轴里自由选项（至少 3 项），生成一个静态初始设定。
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>连接设置</h2>
+        <div class="config-grid">
+          <label>
+            Worker API 地址
+            <input id="apiUrl" type="url" placeholder="https://your-worker.workers.dev/generate" />
+          </label>
+          <label>
+            模型名（可改）
+            <input id="model" type="text" value="MiniMax-M2.5" />
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>选择轴要素</h2>
+          <div>
+            <span id="selectedCount">已选 0 项</span>
+            <button id="clearBtn" type="button" class="ghost">清空</button>
+          </div>
+        </div>
+        <div id="axisContainer" class="axis-container"></div>
+      </section>
+
+      <section class="card">
+        <h2>补充偏好（可选）</h2>
+        <label>
+          你希望的语气/强度
+          <textarea id="extraPrompt" rows="3" placeholder="例如：偏克制、带一点危险感；开场场景不要太长。"></textarea>
+        </label>
+      </section>
+
+      <section class="actions">
+        <button id="generateBtn" type="button">生成初始剧本</button>
+        <button id="regenBtn" type="button" class="ghost">重新生成</button>
+      </section>
+
+      <section class="card">
+        <h2>生成结果</h2>
+        <p id="status" class="muted">等待生成…</p>
+        <article id="result" class="result"></article>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
