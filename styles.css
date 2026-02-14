@@ -66,24 +66,39 @@ button:hover { box-shadow: 0 0 20px rgba(0, 231, 255, 0.2); }
 .actions { display: flex; gap: 8px; margin-top: 10px; }
 .result-panel { margin-top: 14px; border-top: 1px dashed #345; padding-top: 12px; }
 .result { white-space: pre-wrap; line-height: 1.65; }
-.doc-layout { display: grid; grid-template-columns: 220px 1fr; gap: 10px; margin-top: 10px; min-height: 70vh; }
-.doc-toc, .doc-content {
+.selected-explain {
+  border: 1px solid #2f3a59;
+  border-radius: 10px;
+  background: rgba(10,14,24,0.85);
+  padding: 10px;
+  max-height: 38vh;
+  overflow: auto;
+}
+.explain-card {
+  border: 1px solid #2a446b;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: rgba(0, 231, 255, 0.04);
+}
+.explain-card h4 { margin: 0 0 6px; color: #ccf5ff; }
+.explain-card p { margin: 0; color: #b7c9ef; line-height: 1.6; font-size: 13px; white-space: pre-wrap; }
+.doc-layout { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; min-height: 40vh; }
+.doc-content {
   border: 1px solid #2f3a59;
   border-radius: 10px;
   background: rgba(10,14,24,0.85);
   overflow: auto;
-  max-height: 70vh;
+  max-height: 48vh;
   padding: 10px;
 }
-.toc-item { display: block; width: 100%; text-align: left; background: transparent; color: #add3ff; border: 0; padding: 7px; border-radius: 7px; }
-.toc-item:hover, .toc-item.active { background: rgba(0, 231, 255, 0.12); }
 .doc-section { border-bottom: 1px dashed #293b61; padding-bottom: 12px; margin-bottom: 12px; }
 .doc-section h3 { margin: 0 0 8px; color: #d7ecff; }
 .doc-text { white-space: pre-wrap; line-height: 1.6; color: #b7c9ef; font-size: 13px; }
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 1fr; }
-  .doc-layout { grid-template-columns: 1fr; min-height: auto; }
-  .doc-toc, .doc-content { max-height: 40vh; }
+  .doc-content { max-height: 38vh; }
+  .selected-explain { max-height: 30vh; }
 }
 @media (max-width: 720px) {
   .config-grid { grid-template-columns: 1fr; }

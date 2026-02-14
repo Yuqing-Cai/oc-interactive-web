@@ -31,11 +31,14 @@ const apiUrlInput = document.getElementById("apiUrl");
 const modelInput = document.getElementById("model");
 const extraPromptInput = document.getElementById("extraPrompt");
 const docSearchInput = document.getElementById("docSearch");
-const docTocEl = document.getElementById("docToc");
 const docContentEl = document.getElementById("docContent");
+const selectedExplainEl = document.getElementById("selectedExplain");
 
 apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
 modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
+
+let allDocSections = [];
+let optionDetailMap = new Map();
 
 renderAxes();
 updateSelectedCount();
@@ -81,7 +84,10 @@ function renderAxes() {
     axisContainer.appendChild(group);
   });
 
-  axisContainer.addEventListener("change", updateSelectedCount);
+  axisContainer.addEventListener("change", () => {
+    updateSelectedCount();
+    renderSelectedExplain(getSelected());
+  });
 }
 
 function getSelected() {
@@ -96,6 +102,7 @@ function updateSelectedCount() {
 function clearSelections() {
   axisContainer.querySelectorAll("input[type='checkbox']").forEach((input) => (input.checked = false));
   updateSelectedCount();
+  renderSelectedExplain([]);
 }
 
 async function generate(isRegenerate) {
@@ -150,13 +157,13 @@ async function copyResult() {
   }
 }
 
-let allDocSections = [];
-
 async function loadDoc() {
   try {
     const md = await fetch("./OC.md").then((r) => r.text());
     allDocSections = parseDocSections(md);
+    optionDetailMap = buildOptionDetailMap(md);
     renderDoc(allDocSections);
+    renderSelectedExplain(getSelected());
   } catch {
     docContentEl.textContent = "OC.md 加载失败。";
   }
@@ -170,34 +177,78 @@ function parseDocSections(md) {
   for (const line of lines) {
     const m = /^(#{1,3})\s+(.*)$/.exec(line);
     if (m) {
-      if (current.text.trim()) sections.push({ ...current, text: current.text.trim() });
-      current = { title: m[2].trim(), level: m[1].length, text: "" };
+      if (current.text.trim()) sections.push({ ...current, text: cleanMarkdown(current.text.trim()) });
+      current = { title: cleanMarkdown(m[2].trim()), level: m[1].length, text: "" };
     } else {
       current.text += `${line}\n`;
     }
   }
-  if (current.text.trim()) sections.push({ ...current, text: current.text.trim() });
+  if (current.text.trim()) sections.push({ ...current, text: cleanMarkdown(current.text.trim()) });
   return sections;
 }
 
+function buildOptionDetailMap(md) {
+  const map = new Map();
+  const lines = md.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const m = /^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.exec(line);
+    if (!m) continue;
+
+    const code = m[1].trim();
+    const name = cleanMarkdown(m[2].trim());
+    const key = `${code} ${name}`;
+
+    const contentLines = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j].trim();
+      if (/^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.test(next) || /^(#{1,3})\s+/.test(next)) break;
+      if (next === "---") continue;
+      contentLines.push(lines[j]);
+    }
+
+    const text = cleanMarkdown(contentLines.join("\n")).trim();
+    if (text) map.set(key, text);
+  }
+
+  return map;
+}
+
+function renderSelectedExplain(selected) {
+  if (!selected.length) {
+    selectedExplainEl.innerHTML = `<p class="muted">还没有选中轴要素。先在左侧勾选，解释会自动显示在这里。</p>`;
+    return;
+  }
+
+  const cards = selected.map((item) => {
+    const key = item.option;
+    const detail = optionDetailMap.get(key) || "该选项暂无对应长文本，已采用系统短解释。";
+    const short = AXES[item.axis]?.options?.[item.option] || "";
+
+    return `
+      <section class="explain-card">
+        <h4>${escapeHtml(item.option)}</h4>
+        ${short ? `<p><strong>速览：</strong>${escapeHtml(short)}</p>` : ""}
+        <p>${escapeHtml(trimForRead(detail, 520))}</p>
+      </section>`;
+  });
+
+  selectedExplainEl.innerHTML = cards.join("\n");
+}
+
+function trimForRead(text, max = 500) {
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
 function renderDoc(sections) {
-  docTocEl.innerHTML = "";
   docContentEl.innerHTML = "";
 
-  sections.forEach((sec, idx) => {
-    const tocBtn = document.createElement("button");
-    tocBtn.className = "toc-item";
-    tocBtn.textContent = sec.title;
-    tocBtn.onclick = () => {
-      docContentEl.querySelectorAll(".doc-section")[idx]?.scrollIntoView({ behavior: "smooth", block: "start" });
-      docTocEl.querySelectorAll(".toc-item").forEach((x) => x.classList.remove("active"));
-      tocBtn.classList.add("active");
-    };
-    docTocEl.appendChild(tocBtn);
-
+  sections.forEach((sec) => {
     const article = document.createElement("section");
     article.className = "doc-section";
-    article.innerHTML = `<h3>${sec.title}</h3><div class="doc-text">${escapeHtml(sec.text)}</div>`;
+    article.innerHTML = `<h3>${escapeHtml(sec.title)}</h3><div class="doc-text">${escapeHtml(sec.text)}</div>`;
     docContentEl.appendChild(article);
   });
 }
@@ -207,6 +258,17 @@ function filterDoc(query) {
   const q = query.toLowerCase();
   const filtered = allDocSections.filter((s) => s.title.toLowerCase().includes(q) || s.text.toLowerCase().includes(q));
   renderDoc(filtered);
+}
+
+function cleanMarkdown(str) {
+  return str
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\|.*\|\s*$/gm, "")
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/^\s*---\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function escapeHtml(str) {

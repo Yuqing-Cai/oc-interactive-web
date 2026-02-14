@@ -63,14 +63,19 @@
 
         <aside class="panel right">
           <div class="section-head">
-            <h2>OC 全文交互检索</h2>
+            <h2>选中要素即时解释</h2>
+          </div>
+          <p class="muted">你在左侧勾选后，这里会自动显示对应原文解释（无需再搜索）。</p>
+          <article id="selectedExplain" class="selected-explain"></article>
+
+          <div class="section-head top-gap">
+            <h2>OC 全文浏览（清爽版）</h2>
           </div>
           <label>
             搜索关键词
             <input id="docSearch" type="text" placeholder="搜索：例如 神权 / C轴 / 赛博美学" />
           </label>
-          <div class="doc-layout">
-            <nav id="docToc" class="doc-toc"></nav>
+          <div class="doc-layout single">
             <article id="docContent" class="doc-content"></article>
           </div>
         </aside>
