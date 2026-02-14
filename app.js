@@ -59,7 +59,6 @@ apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
 modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
 
 let optionDetailMap = new Map(); // P2 => long text
-let axisDetailMap = new Map(); // P => long text
 
 renderAxes();
 updateSelectedCount();
@@ -83,14 +82,10 @@ function renderAxes() {
     head.className = "axis-head";
     head.innerHTML = `<h3>${axisName === "Palette" ? "调色板" : `${axisName} 轴`}</h3><span class="chip">${Object.keys(cfg.options).length}项</span>`;
 
-    const desc = document.createElement("p");
-    desc.className = "axis-desc";
-    desc.textContent = cfg.desc;
-
     const long = document.createElement("p");
     long.className = "axis-desc axis-long";
     long.dataset.axisLong = axisName;
-    long.textContent = "正在加载该轴详细解释...";
+    long.textContent = AXIS_GUIDE[axisName] || cfg.desc;
 
     const optionsWrap = document.createElement("div");
     optionsWrap.className = "options";
@@ -105,7 +100,6 @@ function renderAxes() {
     });
 
     group.appendChild(head);
-    group.appendChild(desc);
     group.appendChild(long);
     group.appendChild(optionsWrap);
     axisContainer.appendChild(group);
@@ -220,7 +214,6 @@ async function loadDocForExplanations() {
     const md = await fetch("./OC.md").then((r) => r.text());
     const parsed = parseDoc(md);
     optionDetailMap = parsed.optionMap;
-    axisDetailMap = parsed.axisMap;
     hydrateAxisLongDescriptions();
     renderSelectedExplain(getSelected());
   } catch {
