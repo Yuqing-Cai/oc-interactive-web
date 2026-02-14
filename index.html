@@ -12,7 +12,7 @@
       <header class="hero panel">
         <p class="kicker">WORLD FORGE // OC GENESIS CONSOLE</p>
         <h1>男主初始状态生成器</h1>
-        <p class="muted">选择至少 3 项轴要素，召唤一个静态初始设定。右侧可动态查阅完整 OC 文档。</p>
+        <p class="muted">左侧选轴，右侧即时给你对应解释卡。至少选 3 项即可生成。</p>
       </header>
 
       <div class="layout">
@@ -21,14 +21,8 @@
             <h2>连接配置</h2>
           </div>
           <div class="config-grid">
-            <label>
-              Worker API 地址
-              <input id="apiUrl" type="url" placeholder="https://xxx.workers.dev/generate" />
-            </label>
-            <label>
-              模型名
-              <input id="model" type="text" value="MiniMax-M2.5" />
-            </label>
+            <label>Worker API 地址<input id="apiUrl" type="url" placeholder="https://xxx.workers.dev/generate" /></label>
+            <label>模型名<input id="model" type="text" value="MiniMax-M2.5" /></label>
           </div>
 
           <div class="section-head top-gap">
@@ -61,27 +55,45 @@
           </div>
         </section>
 
-        <aside class="panel right">
+        <aside class="panel right" id="insightPanel">
           <div class="section-head">
-            <h2>选中要素即时解释</h2>
+            <h2>当前轴解释</h2>
+            <span id="activeAxisBadge" class="chip">-</span>
           </div>
-          <p class="muted">你在左侧勾选后，这里会自动显示对应原文解释（无需再搜索）。</p>
+          <article id="currentAxisInfo" class="selected-explain"></article>
+
+          <div class="section-head top-gap">
+            <h2>你选中的要素卡</h2>
+          </div>
           <article id="selectedExplain" class="selected-explain"></article>
 
           <div class="section-head top-gap">
-            <h2>OC 全文浏览（清爽版）</h2>
+            <h2>固定对比（最多2项）</h2>
           </div>
-          <label>
-            搜索关键词
-            <input id="docSearch" type="text" placeholder="搜索：例如 神权 / C轴 / 赛博美学" />
-          </label>
-          <div class="doc-layout single">
-            <article id="docContent" class="doc-content"></article>
+          <article id="comparePanel" class="selected-explain"></article>
+
+          <div class="section-head top-gap">
+            <h2>设计原则（静态）</h2>
           </div>
+          <article class="selected-explain">
+            <section class="explain-card">
+              <h4>① 轴是自由组合，不是必选题</h4>
+              <p>至少选 3 项即可；不需要每个轴都选。你选的不是“正确答案”，而是你要的关系张力。</p>
+            </section>
+            <section class="explain-card">
+              <h4>② 先定存在，再定灵魂，再定关系</h4>
+              <p>W/B/P/R 决定世界硬件；M/C/E/J/S 决定人格逻辑；D/V/L/A 决定关系政治学。</p>
+            </section>
+            <section class="explain-card">
+              <h4>③ 生成的是“静态初始态”</h4>
+              <p>当前工具不写后续剧情推进、不写轴变化、不写终局，只锚定开场时刻。</p>
+            </section>
+          </article>
         </aside>
       </div>
     </main>
 
+    <button id="mobileInsightToggle" class="mobile-toggle">查看解释面板</button>
     <script src="./app.js"></script>
   </body>
 </html>

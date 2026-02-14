@@ -30,19 +30,24 @@ const statusEl = document.getElementById("status");
 const apiUrlInput = document.getElementById("apiUrl");
 const modelInput = document.getElementById("model");
 const extraPromptInput = document.getElementById("extraPrompt");
-const docSearchInput = document.getElementById("docSearch");
-const docContentEl = document.getElementById("docContent");
+const currentAxisInfoEl = document.getElementById("currentAxisInfo");
 const selectedExplainEl = document.getElementById("selectedExplain");
+const comparePanelEl = document.getElementById("comparePanel");
+const activeAxisBadgeEl = document.getElementById("activeAxisBadge");
+const insightPanel = document.getElementById("insightPanel");
+const mobileInsightToggle = document.getElementById("mobileInsightToggle");
 
 apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
 modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
 
-let allDocSections = [];
 let optionDetailMap = new Map();
+let activeAxis = "W";
+let pinned = [];
 
 renderAxes();
 updateSelectedCount();
-loadDoc();
+loadDocForExplanations();
+setupAxisObserver();
 
 apiUrlInput.addEventListener("change", () => localStorage.setItem("oc_api_url", apiUrlInput.value.trim()));
 modelInput.addEventListener("change", () => localStorage.setItem("oc_model", modelInput.value.trim()));
@@ -50,12 +55,13 @@ clearBtn.addEventListener("click", clearSelections);
 generateBtn.addEventListener("click", () => generate(false));
 regenBtn.addEventListener("click", () => generate(true));
 copyBtn.addEventListener("click", copyResult);
-docSearchInput.addEventListener("input", () => filterDoc(docSearchInput.value.trim()));
+mobileInsightToggle.addEventListener("click", () => insightPanel.classList.toggle("open"));
 
 function renderAxes() {
   Object.entries(AXES).forEach(([axisName, cfg]) => {
     const group = document.createElement("section");
     group.className = "axis-group";
+    group.dataset.axis = axisName;
 
     const head = document.createElement("div");
     head.className = "axis-head";
@@ -74,9 +80,7 @@ function renderAxes() {
       const id = `${axisName}-${index}`;
       const label = document.createElement("label");
       label.className = "option-item";
-      label.innerHTML = `
-        <div class="option-name"><input type="checkbox" data-axis="${axisName}" value="${opt}" id="${id}" /><span>${opt}</span></div>
-        <div class="option-desc">${detail}</div>`;
+      label.innerHTML = `<div class="option-name"><input type="checkbox" data-axis="${axisName}" value="${opt}" id="${id}" /><span>${opt}</span></div><div class="option-desc">${detail}</div>`;
       optionsWrap.appendChild(label);
     });
 
@@ -87,12 +91,30 @@ function renderAxes() {
   axisContainer.addEventListener("change", () => {
     updateSelectedCount();
     renderSelectedExplain(getSelected());
+    renderCurrentAxisInfo();
   });
 }
 
+function setupAxisObserver() {
+  const observer = new IntersectionObserver((entries) => {
+    const hit = entries.find((e) => e.isIntersecting);
+    if (!hit) return;
+    activeAxis = hit.target.dataset.axis;
+    highlightActiveAxis();
+    renderCurrentAxisInfo();
+  }, { threshold: 0.35 });
+
+  document.querySelectorAll(".axis-group").forEach((el) => observer.observe(el));
+  highlightActiveAxis();
+}
+
+function highlightActiveAxis() {
+  document.querySelectorAll(".axis-group").forEach((el) => el.classList.toggle("active-axis", el.dataset.axis === activeAxis));
+  activeAxisBadgeEl.textContent = activeAxis === "Palette" ? "调色板" : `${activeAxis} 轴`;
+}
+
 function getSelected() {
-  const checked = axisContainer.querySelectorAll("input[type='checkbox']:checked");
-  return Array.from(checked).map((item) => ({ axis: item.dataset.axis, option: item.value }));
+  return Array.from(axisContainer.querySelectorAll("input[type='checkbox']:checked")).map((item) => ({ axis: item.dataset.axis, option: item.value }));
 }
 
 function updateSelectedCount() {
@@ -101,8 +123,74 @@ function updateSelectedCount() {
 
 function clearSelections() {
   axisContainer.querySelectorAll("input[type='checkbox']").forEach((input) => (input.checked = false));
+  pinned = [];
   updateSelectedCount();
   renderSelectedExplain([]);
+  renderComparePanel();
+  renderCurrentAxisInfo();
+}
+
+function renderCurrentAxisInfo() {
+  const cfg = AXES[activeAxis];
+  if (!cfg) return;
+  const selectedOnAxis = getSelected().filter((s) => s.axis === activeAxis);
+
+  const selectedHtml = selectedOnAxis.length
+    ? selectedOnAxis.map((it) => `<section class="explain-card"><h4>${escapeHtml(it.option)}</h4><p>${escapeHtml(getOptionLong(it.option, 420))}</p></section>`).join("")
+    : `<section class="explain-card"><h4>${activeAxis} 轴</h4><p>${escapeHtml(cfg.desc)}\n\n你还没选这个轴。勾选后这里会出现对应产品卡解释。</p></section>`;
+
+  currentAxisInfoEl.innerHTML = selectedHtml;
+}
+
+function renderSelectedExplain(selected) {
+  if (!selected.length) {
+    selectedExplainEl.innerHTML = `<p class="muted">还没有选中轴要素。先勾选，卡片会即时出现。</p>`;
+    return;
+  }
+
+  selectedExplainEl.innerHTML = selected.map((item) => {
+    const short = AXES[item.axis]?.options?.[item.option] || "";
+    const pinnedMark = pinned.includes(item.option);
+    return `<section class="explain-card">
+      <h4>${escapeHtml(item.option)}
+        <button class="pin-btn" data-pin="${escapeHtml(item.option)}">${pinnedMark ? "取消固定" : "固定对比"}</button>
+      </h4>
+      ${short ? `<p><strong>速览：</strong>${escapeHtml(short)}</p>` : ""}
+      <p>${escapeHtml(getOptionLong(item.option, 320))}</p>
+    </section>`;
+  }).join("");
+
+  selectedExplainEl.querySelectorAll("[data-pin]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const key = e.currentTarget.dataset.pin;
+      togglePin(key);
+      renderSelectedExplain(getSelected());
+      renderComparePanel();
+    });
+  });
+}
+
+function togglePin(option) {
+  if (pinned.includes(option)) {
+    pinned = pinned.filter((x) => x !== option);
+    return;
+  }
+  if (pinned.length >= 2) pinned.shift();
+  pinned.push(option);
+}
+
+function renderComparePanel() {
+  if (!pinned.length) {
+    comparePanelEl.innerHTML = `<p class="muted">在上面的要素卡点击“固定对比”，最多固定2项。</p>`;
+    return;
+  }
+
+  comparePanelEl.innerHTML = pinned.map((opt) => `<section class="explain-card"><h4>${escapeHtml(opt)}</h4><p>${escapeHtml(getOptionLong(opt, 260))}</p></section>`).join("");
+}
+
+function getOptionLong(optionKey, max = 500) {
+  const text = optionDetailMap.get(optionKey) || "该选项暂无长文本，已使用系统摘要。";
+  return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
 async function generate(isRegenerate) {
@@ -116,17 +204,14 @@ async function generate(isRegenerate) {
 
   setLoading(true);
   setStatus(isRegenerate ? "正在重新生成…" : "正在生成…", false);
-
   try {
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selections, model, extraPrompt }),
     });
-
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || "生成失败");
-
     resultEl.textContent = data.content;
     setStatus("生成完成。", false);
   } catch (err) {
@@ -157,34 +242,17 @@ async function copyResult() {
   }
 }
 
-async function loadDoc() {
+async function loadDocForExplanations() {
   try {
     const md = await fetch("./OC.md").then((r) => r.text());
-    allDocSections = parseDocSections(md);
     optionDetailMap = buildOptionDetailMap(md);
-    renderDoc(allDocSections);
+    renderCurrentAxisInfo();
     renderSelectedExplain(getSelected());
+    renderComparePanel();
   } catch {
-    docContentEl.textContent = "OC.md 加载失败。";
+    currentAxisInfoEl.innerHTML = `<p class="muted">OC.md 加载失败，暂时使用短解释。</p>`;
+    renderComparePanel();
   }
-}
-
-function parseDocSections(md) {
-  const lines = md.split("\n");
-  const sections = [];
-  let current = { title: "文档开场", level: 1, text: "" };
-
-  for (const line of lines) {
-    const m = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (m) {
-      if (current.text.trim()) sections.push({ ...current, text: cleanMarkdown(current.text.trim()) });
-      current = { title: cleanMarkdown(m[2].trim()), level: m[1].length, text: "" };
-    } else {
-      current.text += `${line}\n`;
-    }
-  }
-  if (current.text.trim()) sections.push({ ...current, text: cleanMarkdown(current.text.trim()) });
-  return sections;
 }
 
 function buildOptionDetailMap(md) {
@@ -196,81 +264,24 @@ function buildOptionDetailMap(md) {
     const m = /^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.exec(line);
     if (!m) continue;
 
-    const code = m[1].trim();
-    const name = cleanMarkdown(m[2].trim());
-    const key = `${code} ${name}`;
-
-    const contentLines = [];
+    const key = `${m[1].trim()} ${cleanMarkdown(m[2].trim())}`;
+    const content = [];
     for (let j = i + 1; j < lines.length; j++) {
       const next = lines[j].trim();
       if (/^\*\*([A-Z]\d)[:：]\s*([^*]+)\*\*$/.test(next) || /^(#{1,3})\s+/.test(next)) break;
       if (next === "---") continue;
-      contentLines.push(lines[j]);
+      content.push(lines[j]);
     }
-
-    const text = cleanMarkdown(contentLines.join("\n")).trim();
+    const text = cleanMarkdown(content.join("\n")).trim();
     if (text) map.set(key, text);
   }
-
   return map;
 }
 
-function renderSelectedExplain(selected) {
-  if (!selected.length) {
-    selectedExplainEl.innerHTML = `<p class="muted">还没有选中轴要素。先在左侧勾选，解释会自动显示在这里。</p>`;
-    return;
-  }
-
-  const cards = selected.map((item) => {
-    const key = item.option;
-    const detail = optionDetailMap.get(key) || "该选项暂无对应长文本，已采用系统短解释。";
-    const short = AXES[item.axis]?.options?.[item.option] || "";
-
-    return `
-      <section class="explain-card">
-        <h4>${escapeHtml(item.option)}</h4>
-        ${short ? `<p><strong>速览：</strong>${escapeHtml(short)}</p>` : ""}
-        <p>${escapeHtml(trimForRead(detail, 520))}</p>
-      </section>`;
-  });
-
-  selectedExplainEl.innerHTML = cards.join("\n");
-}
-
-function trimForRead(text, max = 500) {
-  if (!text) return "";
-  return text.length > max ? `${text.slice(0, max)}...` : text;
-}
-
-function renderDoc(sections) {
-  docContentEl.innerHTML = "";
-
-  sections.forEach((sec) => {
-    const article = document.createElement("section");
-    article.className = "doc-section";
-    article.innerHTML = `<h3>${escapeHtml(sec.title)}</h3><div class="doc-text">${escapeHtml(sec.text)}</div>`;
-    docContentEl.appendChild(article);
-  });
-}
-
-function filterDoc(query) {
-  if (!query) return renderDoc(allDocSections);
-  const q = query.toLowerCase();
-  const filtered = allDocSections.filter((s) => s.title.toLowerCase().includes(q) || s.text.toLowerCase().includes(q));
-  renderDoc(filtered);
-}
-
 function cleanMarkdown(str) {
-  return str
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\|.*\|\s*$/gm, "")
-    .replace(/\*\*/g, "")
-    .replace(/`/g, "")
-    .replace(/^\s*---\s*$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return str.replace(/^\s*[-*+]\s+/gm, "").replace(/\*\*/g, "").replace(/`/g, "").replace(/^\s*---\s*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function escapeHtml(str) {
+function escapeHtml(str = "") {
   return str.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 }
