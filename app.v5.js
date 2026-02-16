@@ -70,16 +70,14 @@ const regenBtn = document.getElementById("regenBtn");
 const copyBtn = document.getElementById("copyBtn");
 const resultEl = document.getElementById("result");
 const statusEl = document.getElementById("status");
-const apiUrlInput = document.getElementById("apiUrl");
-const modelInput = document.getElementById("model");
 const extraPromptInput = document.getElementById("extraPrompt");
 const selectedExplainEl = document.getElementById("selectedExplain");
 const insightPanel = document.getElementById("insightPanel");
 const mobileInsightToggle = document.getElementById("mobileInsightToggle");
 const themeSelect = document.getElementById("themeSelect");
 
-apiUrlInput.value = localStorage.getItem("oc_api_url") || "";
-modelInput.value = localStorage.getItem("oc_model") || "MiniMax-M2.5";
+const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
+const FIXED_MODEL = "MiniMax-M2.5";
 const savedTheme = localStorage.getItem("oc_theme") || "cyan";
 if (themeSelect) {
   themeSelect.value = savedTheme;
@@ -92,8 +90,6 @@ renderAxes();
 updateSelectedCount();
 loadDocForExplanations();
 
-apiUrlInput.addEventListener("change", () => localStorage.setItem("oc_api_url", apiUrlInput.value.trim()));
-modelInput.addEventListener("change", () => localStorage.setItem("oc_model", modelInput.value.trim()));
 clearBtn.addEventListener("click", clearSelections);
 generateBtn.addEventListener("click", () => generate(false));
 regenBtn.addEventListener("click", () => generate(true));
@@ -210,13 +206,12 @@ function trim(text, max) {
 }
 
 async function generate(isRegenerate) {
-  const apiUrl = apiUrlInput.value.trim();
-  const model = modelInput.value.trim() || "MiniMax-M2.5";
+  const apiUrl = FIXED_API_URL;
+  const model = FIXED_MODEL;
   const extraPrompt = extraPromptInput.value.trim();
   const selections = getSelected().map(({ axis, option }) => ({ axis, option }));
   const mode = detectGenerateMode(selections);
 
-  if (!apiUrl) return setStatus("请先填写 Worker API 地址。", true);
   if (selections.length < 3) return setStatus("至少选择 3 项轴要素。", true);
 
   setLoading(true);

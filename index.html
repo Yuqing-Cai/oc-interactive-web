@@ -34,20 +34,14 @@
       <div class="layout">
         <section class="panel left">
           <div class="section-head">
-            <h2>连接配置</h2>
-          </div>
-          <div class="config-grid">
-            <label>Worker API 地址<input id="apiUrl" type="url" placeholder="https://xxx.workers.dev/generate" /></label>
-            <label>模型名<input id="model" type="text" value="MiniMax-M2.5" /></label>
+            <h2>轴选择面板</h2>
+            <span class="chip">内置模型：MiniMax-M2.5</span>
           </div>
 
-          <div class="section-head top-gap">
-            <h2>轴选择面板</h2>
-            <div class="row-actions">
-              <span id="selectedCount" class="chip">已选 0 项</span>
-              <span id="modeBadge" class="chip">模式：开场静态</span>
-              <button id="clearBtn" type="button" class="ghost">清空</button>
-            </div>
+          <div class="row-actions top-gap">
+            <span id="selectedCount" class="chip">已选 0 项</span>
+            <span id="modeBadge" class="chip">模式：开场静态</span>
+            <button id="clearBtn" type="button" class="ghost">清空</button>
           </div>
           <div id="axisContainer" class="axis-container"></div>
 

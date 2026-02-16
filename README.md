@@ -16,10 +16,11 @@
 **https://yuqing-cai.github.io/oc-interactive-web/**
 
 使用步骤：
-1. 填 Worker API 地址（一次保存，后续自动记住）
-2. 选模型（默认 MiniMax-M2.5）
-3. 勾选轴（至少 3 项）
-4. 点击生成
+1. 勾选轴（至少 3 项）
+2. 可选填写补充偏好
+3. 点击生成
+
+> 当前页面已内置固定 Worker API 与固定模型（MiniMax-M2.5），普通用户无需任何配置。
 
 > 你只想“直接玩”，看到这里就够了。
 
@@ -30,6 +31,9 @@
 - `index.html` / `styles.v5.css` / `app.v5.js`：前端页面
 - `worker/index.js`：后端代理与生成逻辑（含静默校验/修复）
 - `OC.md`：原始轴文档
+
+固定配置位置：
+- 前端固定 API / 模型在 `app.v5.js`：`FIXED_API_URL`、`FIXED_MODEL`
 
 ---
 
