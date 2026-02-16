@@ -256,13 +256,19 @@ async function generate(isRegenerate) {
 
   const liveTrace = [];
   const updateProgress = () => {
-    const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
+    const elapsedMs = Math.max(100, performance.now() - startedAt);
+    const seconds = elapsedMs / 1000;
     setStatus(`${actionLabel}（${modeLabel}，已运行 ${seconds.toFixed(1)} 秒）…`, false);
-    if (thinkingContentEl && !liveTrace.length) {
+
+    if (!thinkingContentEl) return;
+    if (!liveTrace.length) {
       thinkingContentEl.innerHTML = `<div class="trace-log">
         <div class="trace-item"><span class="trace-time">进行中</span><span class="trace-text">请求已发送，等待服务端阶段回传…</span></div>
       </div>`;
+      return;
     }
+
+    thinkingContentEl.innerHTML = formatTrace(liveTrace, false, mode, elapsedMs, {}, elapsedMs);
   };
 
   updateProgress();
@@ -313,7 +319,10 @@ async function generate(isRegenerate) {
 
         if (evt?.type === "stage") {
           liveTrace.push({ stage: evt.stage, t: evt.t || 0 });
-          if (thinkingContentEl) thinkingContentEl.innerHTML = formatTrace(liveTrace, false, mode, evt.t || 0);
+          if (thinkingContentEl) {
+            const elapsedMs = Math.max(100, performance.now() - startedAt);
+            thinkingContentEl.innerHTML = formatTrace(liveTrace, false, mode, elapsedMs, {}, elapsedMs);
+          }
         } else if (evt?.type === "ping") {
           // 心跳包：用于保持流连接活性，前端无需额外渲染。
         } else if (evt?.type === "done") {
@@ -370,7 +379,7 @@ function setStatus(text, isError) {
   statusEl.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
 }
 
-function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra = {}) {
+function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra = {}, elapsedMs = 0) {
   const labelMap = {
     request_received: "收到生成请求",
     mode_decided: "确定生成模式",
@@ -390,7 +399,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
   };
 
   const items = Array.isArray(trace) ? trace : [];
-  const rows = items.length
+  let rows = items.length
     ? items
         .map((item) => {
           const sec = (Number(item.t || 0) / 1000).toFixed(1);
@@ -399,6 +408,18 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
         })
         .join("")
     : `<div class="trace-item"><span class="trace-time">-</span><span class="trace-text">模型阶段日志不可用</span></div>`;
+
+  const last = items.at(-1);
+  const done = last?.stage === "completed";
+  const liveMs = elapsedMs || totalMs || Number(last?.t || 0);
+  if (last && !done && liveMs > Number(last.t || 0)) {
+    const nowSec = (liveMs / 1000).toFixed(1);
+    const runningFor = ((liveMs - Number(last.t || 0)) / 1000).toFixed(1);
+    const runningLabel = last.stage === "upstream_request_started"
+      ? `模型生成中（已持续 ${runningFor}s）`
+      : `阶段进行中（已持续 ${runningFor}s）`;
+    rows += `<div class="trace-item"><span class="trace-time">${nowSec}s</span><span class="trace-text">${escapeHtml(runningLabel)}</span></div>`;
+  }
 
   const timingRows = items.length > 1
     ? items.slice(1).map((item, idx) => {
