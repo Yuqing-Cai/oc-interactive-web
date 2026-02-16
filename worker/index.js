@@ -38,22 +38,44 @@ export default {
       const systemPrompt = buildSystemPrompt(mode);
       const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
-      mark("upstream_request_started");
-      const upstream = await fetchWithTimeout(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.9,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-        }),
-      }, 85000);
+      const payload = {
+        model,
+        temperature: 0.9,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      };
+
+      let upstream;
+      mark("upstream_request_started", { model });
+      try {
+        upstream = await fetchWithTimeout(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(payload),
+        }, 85000);
+      } catch (err) {
+        if (err?.name === "TimeoutError") {
+          const fallbackModel = env.FALLBACK_MODEL || "MiniMax-M2.1-lightning";
+          mark("upstream_timeout", { model, fallbackModel });
+          mark("fallback_request_started", { model: fallbackModel });
+          upstream = await fetchWithTimeout(apiUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({ ...payload, model: fallbackModel, temperature: 0.8 }),
+          }, 60000);
+          mark("fallback_response_received", { status: upstream.status });
+        } else {
+          throw err;
+        }
+      }
 
       if (!upstream.ok) {
         const text = await upstream.text();

@@ -278,8 +278,21 @@ async function generate(isRegenerate) {
       body: JSON.stringify({ selections, model, extraPrompt }),
       signal: requestCtrl.signal,
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data?.error || "生成失败");
+
+    let data = null;
+    let rawText = "";
+    try {
+      data = await response.json();
+    } catch {
+      rawText = await response.text().catch(() => "");
+    }
+
+    if (!response.ok) {
+      const detail = data?.error || rawText || `HTTP ${response.status}`;
+      throw new Error(detail);
+    }
+
+    if (!data) throw new Error("服务返回了非 JSON 响应，请稍后重试。");
 
     resultEl.textContent = data.content;
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
@@ -293,7 +306,9 @@ async function generate(isRegenerate) {
   } catch (err) {
     const msg = err?.name === "AbortError"
       ? "请求超时（约97秒）。可能是网络链路或上游模型耗时过长，请重试。"
-      : (err?.message || "未知错误");
+      : (err?.name === "TypeError"
+        ? "网络层请求失败（可能是跨域/CDN边缘错误或临时断网）。请稍后重试。"
+        : (err?.message || "未知错误"));
     setStatus(`错误：${msg}`, true);
     if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（生成失败）";
     if (thinkingContentEl) thinkingContentEl.textContent = `- 请求失败\n- ${msg}`;
@@ -320,6 +335,9 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0) {
     request_received: "收到生成请求",
     mode_decided: "确定生成模式",
     upstream_request_started: "向模型发起请求",
+    upstream_timeout: "主模型超时，准备降级重试",
+    fallback_request_started: "已切换快速模型重试",
+    fallback_response_received: "快速模型返回结果",
     upstream_response_received: "收到模型初稿",
     output_validated: "完成结构校验",
     repair_started: "触发自动修复",
