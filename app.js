@@ -85,10 +85,10 @@ const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
 const FIXED_MODEL = "MiniMax-M2.5";
-const savedTheme = localStorage.getItem("oc_theme") || "cyan";
+const defaultTheme = "cyan";
 if (themeSelect) {
-  themeSelect.value = savedTheme;
-  applyTheme(savedTheme);
+  themeSelect.value = defaultTheme;
+  applyTheme(defaultTheme);
 }
 
 let optionDetailMap = new Map(); // P2 => long text
@@ -124,7 +124,6 @@ syncMobileToggle();
 if (themeSelect) {
   themeSelect.addEventListener("change", () => {
     const v = themeSelect.value;
-    localStorage.setItem("oc_theme", v);
     applyTheme(v);
   });
 }
