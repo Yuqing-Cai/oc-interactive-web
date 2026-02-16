@@ -27,43 +27,9 @@ export default {
         return json({ error: "OPENAI_API_KEY is missing." }, 500);
       }
 
-      const systemPrompt = [
-        "你是‘OC男主设定总设计师’。",
-        "任务：基于用户所选轴，生成一个‘完整、可直接开写’的男主与世界初始态。",
-        "重要原则：同一组选项可能对应许多自洽男主；你只需要给出其中一种高完成度可能性，但必须把这一种写满写透，不能留大量待补空位。",
-        "输出必须是‘玩家上帝视角可见信息 + MC当下视角可见信息’并列呈现。",
-        "严禁输出思考过程、推理链、注释，严禁输出<think>、[思考]、Reasoning。",
-        "禁止把未选轴写成‘待定/以后补充/可任意扩展’；未选轴也要做合理收束，保证人物完整。",
-        "允许随机生成未选轴的具体取值，但必须与已选轴兼容。",
-        "文风要求：具体、可视化、可执行；避免空泛辞藻。",
-        "",
-        "【硬性输出结构】必须严格按以下8段标题输出，顺序不可变：",
-        "1) 设定总览（玩家上帝视角）",
-        "   - 4~8条，概括此版本男主的核心标签与世界定位。",
-        "2) 男主完整档案（玩家上帝视角）",
-        "   - 必含：年龄段、外观识别点、社会身份/职业、能力来源与边界、资源网络、行为习惯、语言风格、禁忌与底线、公开面与私下面的反差。",
-        "3) 世界观与时代切片（玩家上帝视角）",
-        "   - 交代世界规则、当前时代状态、近期大事件（若无则明确‘近期无重大外部事件但存在潜压’）、故事发生地点、当下天气与体感环境。",
-        "4) MC视角情报（她知道 / 不知道）",
-        "   - 分成两栏：‘MC已知’与‘MC未知（仅玩家已知）’；内容需同时覆盖男主与世界信息。",
-        "5) 关系初始动力学（此刻已成立）",
-        "   - 写明吸引源、冲突源、风险源、边界条件；仅写当前，不写未来走向。",
-        "6) 选轴映射说明",
-        "   - 逐条列出用户已选轴如何体现在设定里（每条1~3句）。",
-        "7) 开场时刻场景锚点",
-        "   - 用条目列出：时间、地点、天气、现场人流/氛围、可被镜头捕捉的3个细节。",
-        "8) 开场片段（300~500字，MC第一视角）",
-        "   - 仅写故事开始这一刻；可有悬念，但不得推进到中后期剧情。",
-        "",
-        "最低信息密度要求：总字数建议 1400~2200 中文字。",
-      ].join("\n");
-
-      const userPrompt = [
-        "请基于以下已选轴要素，生成‘高完成度单版本男主初始设定’：",
-        selections.map((s) => `- ${s.axis}: ${s.option}`).join("\n"),
-        extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
-        "\n提醒：输出中请明确‘这是所有可能性中的一种实现’，但正文仍需完整具体。",
-      ].join("\n");
+      const mode = detectMode(selections);
+      const systemPrompt = buildSystemPrompt(mode);
+      const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
       const upstream = await fetch(apiUrl, {
         method: "POST",
@@ -94,9 +60,9 @@ export default {
         return json({ error: "No content in model response.", raw: data }, 502);
       }
 
-      const check = validateOutput(content);
+      const check = validateOutput(content, mode);
       if (!check.ok) {
-        const repairPrompt = buildRepairPrompt(content, check.missing);
+        const repairPrompt = buildRepairPrompt(content, check.missing, mode);
         const repairUpstream = await fetch(apiUrl, {
           method: "POST",
           headers: {
@@ -131,6 +97,74 @@ export default {
   },
 };
 
+function detectMode(selections) {
+  const axes = new Set(selections.map((s) => String(s.axis || "").trim().toUpperCase()));
+  return axes.has("F") || axes.has("X") || axes.has("T") || axes.has("G") ? "timeline" : "opening";
+}
+
+function buildSystemPrompt(mode) {
+  const common = [
+    "你是‘OC男主设定总设计师’。",
+    "同一组选项可能对应许多自洽男主；你只需给出其中一种高完成度可能性，但必须写满写透，不能留大量待补空位。",
+    "输出必须并列呈现：玩家上帝视角可见信息 + MC当下视角可见信息。",
+    "严禁输出思考过程、推理链、注释，严禁输出<think>、[思考]、Reasoning。",
+    "禁止把未选轴写成‘待定/以后补充/可任意扩展’；未选轴也要做合理收束。",
+    "文风要求：具体、可视化、可执行；避免空泛辞藻。",
+  ];
+
+  if (mode === "timeline") {
+    return [
+      ...common,
+      "",
+      "模式：完整时间线骨架模式（因用户选择了终局/代价/时间/神权相关轴）。",
+      "要求：时间线完整，但桥段细节故意留白，不要把每一幕写成完整小说章节。",
+      "",
+      "【硬性输出结构】必须严格按以下9段标题输出：",
+      "1) 设定总览（玩家上帝视角）",
+      "2) 男主完整档案（玩家上帝视角）",
+      "3) 世界观与时代切片（玩家上帝视角）",
+      "4) MC视角情报（她知道 / 不知道）",
+      "5) 关系初始动力学（此刻已成立）",
+      "6) 三幕时间线骨架（细节留白）",
+      "   - 第一幕：起势；第二幕：失衡；第三幕：兑现与终局。",
+      "   - 每幕必须包含：关键事件节点、情感状态变化、代价压力。",
+      "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
+      "8) 选轴映射说明",
+      "9) 开场片段（250~450字，MC第一视角）",
+      "",
+      "最低信息密度要求：总字数建议 1600~2400 中文字。",
+    ].join("\n");
+  }
+
+  return [
+    ...common,
+    "",
+    "模式：开场静态模式（用户未指定终局相关轴）。",
+    "仅生成开场时刻的完整初始态，不展开完整时间线。",
+    "",
+    "【硬性输出结构】必须严格按以下8段标题输出：",
+    "1) 设定总览（玩家上帝视角）",
+    "2) 男主完整档案（玩家上帝视角）",
+    "3) 世界观与时代切片（玩家上帝视角）",
+    "4) MC视角情报（她知道 / 不知道）",
+    "5) 关系初始动力学（此刻已成立）",
+    "6) 选轴映射说明",
+    "7) 开场时刻场景锚点",
+    "8) 开场片段（300~500字，MC第一视角）",
+    "",
+    "最低信息密度要求：总字数建议 1400~2200 中文字。",
+  ].join("\n");
+}
+
+function buildUserPrompt(selections, extraPrompt, mode) {
+  return [
+    `请基于以下已选轴要素，生成‘高完成度单版本男主设定’（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）：`,
+    selections.map((s) => `- ${s.axis}: ${s.option}`).join("\n"),
+    extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
+    "\n提醒：输出中可说明‘这是所有可能性中的一种实现’，但正文必须完整具体。",
+  ].join("\n");
+}
+
 function sanitizeModelOutput(text) {
   if (!text || typeof text !== "string") return "";
 
@@ -141,28 +175,41 @@ function sanitizeModelOutput(text) {
     .trim();
 }
 
-function validateOutput(content) {
-  const requiredTitles = [
-    "1) 设定总览（玩家上帝视角）",
-    "2) 男主完整档案（玩家上帝视角）",
-    "3) 世界观与时代切片（玩家上帝视角）",
-    "4) MC视角情报（她知道 / 不知道）",
-    "5) 关系初始动力学（此刻已成立）",
-    "6) 选轴映射说明",
-    "7) 开场时刻场景锚点",
-    "8) 开场片段（300~500字，MC第一视角）",
-  ];
+function validateOutput(content, mode) {
+  const requiredTitles = mode === "timeline"
+    ? [
+        "1) 设定总览（玩家上帝视角）",
+        "2) 男主完整档案（玩家上帝视角）",
+        "3) 世界观与时代切片（玩家上帝视角）",
+        "4) MC视角情报（她知道 / 不知道）",
+        "5) 关系初始动力学（此刻已成立）",
+        "6) 三幕时间线骨架（细节留白）",
+        "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
+        "8) 选轴映射说明",
+        "9) 开场片段（250~450字，MC第一视角）",
+      ]
+    : [
+        "1) 设定总览（玩家上帝视角）",
+        "2) 男主完整档案（玩家上帝视角）",
+        "3) 世界观与时代切片（玩家上帝视角）",
+        "4) MC视角情报（她知道 / 不知道）",
+        "5) 关系初始动力学（此刻已成立）",
+        "6) 选轴映射说明",
+        "7) 开场时刻场景锚点",
+        "8) 开场片段（300~500字，MC第一视角）",
+      ];
 
   const missing = requiredTitles.filter((t) => !content.includes(t));
-  const tooShort = content.length < 1200;
-  if (tooShort) missing.push("【总字数不足，请补足信息密度】");
+  const minLength = mode === "timeline" ? 1400 : 1200;
+  if (content.length < minLength) missing.push("【总字数不足，请补足信息密度】");
 
   return { ok: missing.length === 0, missing };
 }
 
-function buildRepairPrompt(draft, missing) {
+function buildRepairPrompt(draft, missing, mode) {
   return [
     "下面是一份初稿，请你修复为最终版。",
+    `模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}`,
     "要求：",
     "- 保留已有可用内容，但补齐缺失结构与信息密度。",
     "- 输出中禁止出现‘修复说明/补充说明/下面是/我已’等元话术。",
