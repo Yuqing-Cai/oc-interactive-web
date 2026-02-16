@@ -2,21 +2,21 @@
   font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --bg: #090b12;
   --bg-accent: #1a1040;
-  --text: #d7e2ff;
-  --muted: #8fa4cf;
+  --text: #eef2ff;
+  --muted: #c3cad8;
   --neon: #00e7ff;
   --grad-a: #2a4dff;
   --grad-b: #8b39ff;
 
-  /* Derived global surfaces (now stronger theme tint) */
-  --panel: color-mix(in srgb, #080d1a 60%, var(--bg-accent) 40%);
-  --line: color-mix(in srgb, #223053 42%, var(--neon) 58%);
-  --soft-line: color-mix(in srgb, #1d2948 54%, var(--neon) 46%);
-  --input-bg: color-mix(in srgb, #0a1020 58%, var(--bg-accent) 42%);
-  --chip-bg: color-mix(in srgb, transparent 80%, var(--neon) 20%);
-  --chip-text: color-mix(in srgb, #d7e2ff 60%, var(--neon) 40%);
-  --card-bg: color-mix(in srgb, #09101f 62%, var(--bg-accent) 38%);
-  --card-tint: color-mix(in srgb, transparent 84%, var(--neon) 16%);
+  /* Derived global surfaces (neutral base, avoid blue lock-in) */
+  --panel: color-mix(in srgb, #0f1014 52%, var(--bg-accent) 48%);
+  --line: color-mix(in srgb, #6b7280 18%, var(--neon) 82%);
+  --soft-line: color-mix(in srgb, #4b5563 24%, var(--neon) 76%);
+  --input-bg: color-mix(in srgb, #0f1115 45%, var(--bg-accent) 55%);
+  --chip-bg: color-mix(in srgb, transparent 76%, var(--neon) 24%);
+  --chip-text: color-mix(in srgb, #f3f4f6 62%, var(--neon) 38%);
+  --card-bg: color-mix(in srgb, #101216 50%, var(--bg-accent) 50%);
+  --card-tint: color-mix(in srgb, transparent 80%, var(--neon) 20%);
   --focus-ring: color-mix(in srgb, transparent 58%, var(--neon) 42%);
   --status-ok: var(--muted);
   --status-error: #ff7b7b;
@@ -39,12 +39,12 @@ body {
 }
 .shell { max-width: 1460px; margin: 0 auto; padding: 16px; position: relative; }
 .panel {
-  background: color-mix(in srgb, var(--panel), transparent 6%);
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
   backdrop-filter: blur(8px);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, transparent 86%, var(--neon) 14%),
+    0 0 0 1px color-mix(in srgb, transparent 82%, var(--neon) 18%),
     0 10px 30px rgba(0, 0, 0, 0.4);
 }
 .hero { padding: 18px; margin-bottom: 14px; }
@@ -68,7 +68,7 @@ body {
 
 .config-grid { display: grid; grid-template-columns: 1fr 220px; gap: 10px; }
 label { display: grid; gap: 6px; font-size: 13px; margin-top: 8px; }
-input, textarea, button {
+input, textarea, button, select {
   background: var(--input-bg);
   border: 1px solid var(--line);
   color: var(--text);
@@ -76,6 +76,7 @@ input, textarea, button {
   padding: 10px;
   font-size: 14px;
 }
+input[type='checkbox'] { accent-color: var(--neon); }
 button {
   cursor: pointer;
   border: 1px solid transparent;
@@ -162,27 +163,33 @@ button.ghost {
 /* Theme packs (explicit panel tint overrides for obvious global shift) */
 body.theme-green {
   --neon:#39ff88; --bg-accent:#0d2b1f; --grad-a:#1fa85c; --grad-b:#52ff9e;
-  --panel:#0c251a; --card-bg:#103322; --input-bg:#0f2c1f;
+  --panel:#0f2e21; --card-bg:#15402d; --input-bg:#123725;
+  --text:#edfff4; --muted:#b7ebcc;
 }
 body.theme-yellow {
   --neon:#ffe95b; --bg-accent:#2e2608; --grad-a:#c7a500; --grad-b:#ffe15c;
-  --panel:#2a2209; --card-bg:#362d0c; --input-bg:#31280b;
+  --panel:#352b0d; --card-bg:#443713; --input-bg:#3d3110;
+  --text:#fffbe8; --muted:#e7dca8;
 }
 body.theme-pink {
   --neon:#ff4ec9; --bg-accent:#2b0d24; --grad-a:#d33ba4; --grad-b:#ff66d3;
-  --panel:#2a1124; --card-bg:#35152f; --input-bg:#30132a;
+  --panel:#34152d; --card-bg:#43203a; --input-bg:#3c1b34;
+  --text:#fff0fa; --muted:#e6bad8;
 }
 body.theme-red {
   --neon:#ff4a4a; --bg-accent:#300c13; --grad-a:#c6283d; --grad-b:#ff5f5f;
-  --panel:#2a0f14; --card-bg:#361319; --input-bg:#301117;
+  --panel:#341419; --card-bg:#441c22; --input-bg:#3c181d;
+  --text:#fff0f2; --muted:#e6b8bf;
 }
 body.theme-purple {
   --neon:#b16bff; --bg-accent:#201038; --grad-a:#6b3dd1; --grad-b:#bb7cff;
-  --panel:#1f1236; --card-bg:#29184a; --input-bg:#251542;
+  --panel:#271842; --card-bg:#34215a; --input-bg:#2d1c4f;
+  --text:#f4efff; --muted:#cbbbe8;
 }
 body.theme-orange {
   --neon:#ff9a3d; --bg-accent:#2b1407; --grad-a:#d46b1f; --grad-b:#ffb25e;
-  --panel:#2a170a; --card-bg:#351d0d; --input-bg:#301a0c;
+  --panel:#341d0f; --card-bg:#452715; --input-bg:#3e2312;
+  --text:#fff4eb; --muted:#e8c6ab;
 }
 
 @media (max-width: 720px) {
