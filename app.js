@@ -257,7 +257,11 @@ async function generate(isRegenerate) {
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
     setStatus(`${actionLabel}（${modeLabel}，已思考 ${seconds.toFixed(1)} 秒）…`, false);
     if (thinkingContentEl) {
-      thinkingContentEl.textContent = `- 请求已发送\n- 模型生成中\n- 当前已思考 ${seconds.toFixed(1)} 秒`;
+      thinkingContentEl.innerHTML = `<div class="trace-log">
+        <div class="trace-item"><span class="trace-time">进行中</span><span class="trace-text">请求已发送</span></div>
+        <div class="trace-item"><span class="trace-time">进行中</span><span class="trace-text">模型生成中</span></div>
+        <div class="trace-item"><span class="trace-time">${seconds.toFixed(1)}s</span><span class="trace-text">当前已思考</span></div>
+      </div>`;
     }
   };
 
@@ -278,7 +282,7 @@ async function generate(isRegenerate) {
     setStatus(`生成完成（已思考 ${seconds.toFixed(1)} 秒）。`, false);
 
     if (thinkingSummaryEl) thinkingSummaryEl.textContent = `系统状态（已完成，用时 ${seconds.toFixed(1)} 秒）`;
-    if (thinkingContentEl) thinkingContentEl.textContent = formatTrace(data?.meta?.trace, data?.meta?.repaired, data?.meta?.mode, data?.meta?.totalMs);
+    if (thinkingContentEl) thinkingContentEl.innerHTML = formatTrace(data?.meta?.trace, data?.meta?.repaired, data?.meta?.mode, data?.meta?.totalMs);
 
     if (thinkingPanelEl) thinkingPanelEl.open = false;
     if (resultPanelEl) resultPanelEl.open = true;
@@ -304,11 +308,6 @@ function setStatus(text, isError) {
 }
 
 function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0) {
-  if (!Array.isArray(trace) || !trace.length) {
-    const sec = totalMs ? (totalMs / 1000).toFixed(1) : "-";
-    return `- 模型阶段日志不可用\n- 模式：${mode || "未知"}\n- 自动修复：${repaired ? "触发" : "未触发"}\n- 总耗时：${sec} 秒`;
-  }
-
   const labelMap = {
     request_received: "收到生成请求",
     mode_decided: "确定生成模式",
@@ -324,17 +323,25 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0) {
     completed: "生成流程完成",
   };
 
-  const lines = trace.map((item) => {
-    const sec = (Number(item.t || 0) / 1000).toFixed(1);
-    const label = labelMap[item.stage] || item.stage;
-    return `- [${sec}s] ${label}`;
-  });
+  const items = Array.isArray(trace) ? trace : [];
+  const rows = items.length
+    ? items.map((item) => {
+        const sec = (Number(item.t || 0) / 1000).toFixed(1);
+        const label = escapeHtml(labelMap[item.stage] || item.stage || "未知阶段");
+        return `<div class="trace-item"><span class="trace-time">${sec}s</span><span class="trace-text">${label}</span></div>`;
+      }).join("")
+    : `<div class="trace-item"><span class="trace-time">-</span><span class="trace-text">模型阶段日志不可用</span></div>`;
 
-  const totalSec = totalMs ? (totalMs / 1000).toFixed(1) : (Number(trace.at(-1)?.t || 0) / 1000).toFixed(1);
-  lines.push(`- 自动修复：${repaired ? "触发" : "未触发"}`);
-  lines.push(`- 模式：${mode || "未知"}`);
-  lines.push(`- 总耗时：${totalSec} 秒`);
-  return lines.join("\n");
+  const totalSec = totalMs
+    ? (totalMs / 1000).toFixed(1)
+    : (Number(items.at(-1)?.t || 0) / 1000).toFixed(1);
+
+  return `<div class="trace-log">${rows}</div>
+    <div class="trace-meta">
+      <div>自动修复：${repaired ? "触发" : "未触发"}</div>
+      <div>模式：${escapeHtml(mode || "未知")}</div>
+      <div>总耗时：${totalSec} 秒</div>
+    </div>`;
 }
 
 async function copyResult() {

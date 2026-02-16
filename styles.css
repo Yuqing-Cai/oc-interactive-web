@@ -194,6 +194,34 @@ button.ghost {
 }
 .result { white-space: pre-wrap; line-height: 1.65; margin-top: 8px; }
 
+.trace-log {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.trace-item {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 8px;
+  align-items: start;
+  color: var(--muted);
+}
+.trace-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: color-mix(in srgb, var(--neon) 55%, var(--text) 45%);
+  font-size: 12px;
+}
+.trace-text { line-height: 1.45; }
+.trace-meta {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 60%, transparent 40%);
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
 .selected-explain {
   border: 0;
   border-radius: 10px;
