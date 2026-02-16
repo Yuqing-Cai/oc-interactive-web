@@ -390,25 +390,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     completed: "生成流程完成",
   };
 
-  const stageOrder = [
-    "request_received",
-    "mode_decided",
-    "upstream_request_started",
-    "upstream_response_received",
-    "output_validated",
-    "repair_started",
-    "repair_applied",
-    "repair_skipped",
-    "completed",
-  ];
-
   const items = Array.isArray(trace) ? trace : [];
-  const reached = new Set(items.map((i) => i.stage));
-  const completed = reached.has("completed");
-  const progress = completed
-    ? 100
-    : Math.min(95, Math.round((Math.max(1, reached.size) / stageOrder.length) * 100));
-
   const rows = items.length
     ? items
         .map((item) => {
@@ -443,14 +425,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     ? (totalMs / 1000).toFixed(1)
     : (Number(items.at(-1)?.t || 0) / 1000).toFixed(1);
 
-  const bar = `<div style="margin:8px 0 10px 0;">
-      <div style="height:8px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;">
-        <div style="height:100%;width:${progress}%;background:linear-gradient(90deg,#22d3ee,#06b6d4);"></div>
-      </div>
-      <div style="margin-top:6px;font-size:12px;opacity:.85;">阶段进度：${progress}%</div>
-    </div>`;
-
-  return `${bar}<div class="trace-log">${rows}</div>${timingTable}
+  return `<div class="trace-log">${rows}</div>${timingTable}
     <div class="trace-meta">
       <div>自动修复：${repaired ? "触发" : "未触发"}</div>
       <div>模式：${escapeHtml(mode || "未知")}</div>

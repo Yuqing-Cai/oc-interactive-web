@@ -302,6 +302,9 @@ function buildSystemPrompt(mode, strictOutput = false) {
     "严禁输出思考过程、推理链、注释，严禁输出<think>、[思考]、Reasoning。",
     "禁止把未选轴写成‘待定/以后补充/可任意扩展’；未选轴也要做合理收束。",
     "文风要求：具体、可视化、可执行；避免空泛辞藻。",
+    "正文第一行禁止任何总标题或标签（例如‘#高完成度…’、‘##…’），直接从规定段落标题开始。",
+    "段内叙述保持连贯，减少碎片化短句和过度分段。",
+    "男主姓名不要使用高频言情网文常见姓氏（如顾、沈、傅、陆、霍、厉、薄、裴、谢、韩、苏等）；优先选择更少见但自然的中文姓氏。",
   ];
 
   if (mode === "timeline") {
@@ -377,6 +380,8 @@ function sanitizeModelOutput(text) {
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/```(?:thinking|analysis)?[\s\S]*?```/gi, "")
     .replace(/^\s*(思考过程|推理过程|Reasoning)[:：].*$/gim, "")
+    // 去掉模型偶发追加在最开头的总标题（用户不需要）
+    .replace(/^\s*#{1,6}\s*.+\n+/m, "")
     .trim();
 }
 
