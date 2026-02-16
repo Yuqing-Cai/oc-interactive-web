@@ -223,6 +223,7 @@ async function generate(isRegenerate) {
   if (selections.length < 3) return setStatus("至少选择 3 项轴要素。", true);
 
   setLoading(true);
+  const startedAt = performance.now();
   setStatus(isRegenerate ? `正在重新生成（${mode === "timeline" ? "完整时间线" : "开场静态"}）…` : `正在生成（${mode === "timeline" ? "完整时间线" : "开场静态"}）…`, false);
   try {
     const response = await fetch(apiUrl, {
@@ -233,7 +234,8 @@ async function generate(isRegenerate) {
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || "生成失败");
     resultEl.textContent = data.content;
-    setStatus("生成完成。", false);
+    const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
+    setStatus(`生成完成（已思考 ${seconds.toFixed(1)} 秒）。`, false);
   } catch (err) {
     setStatus(`错误：${err.message}`, true);
   } finally {
