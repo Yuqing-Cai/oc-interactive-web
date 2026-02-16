@@ -61,16 +61,8 @@ body {
   font-size: 11px;
   color: color-mix(in srgb, var(--neon) 72%, transparent 28%);
   text-shadow: 0 0 8px color-mix(in srgb, var(--neon) 45%, transparent 55%);
-  animation: binary-fall var(--speed, 12s) linear infinite;
-  animation-delay: var(--delay, 0s);
-  will-change: transform, opacity;
-}
-
-@keyframes binary-fall {
-  0%   { transform: translateY(-140%); opacity: 0; }
-  12%  { opacity: .52; }
-  84%  { opacity: .52; }
-  100% { transform: translateY(250%); opacity: 0; }
+  opacity: .5;
+  will-change: transform;
 }
 
 .shell { max-width: 1460px; margin: 0 auto; padding: 16px; position: relative; z-index: 1; }

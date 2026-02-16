@@ -88,6 +88,9 @@ if (themeSelect) {
 }
 
 let optionDetailMap = new Map(); // P2 => long text
+let rainStreams = [];
+let rainRafId = 0;
+let rainLastTs = 0;
 
 renderAxes();
 updateSelectedCount();
@@ -348,8 +351,12 @@ function cleanMarkdown(str) {
 }
 
 function initBinaryRain() {
+  rainStreams = [];
   buildRainColumns(sideRainLeft, 7);
   buildRainColumns(sideRainRight, 7);
+  if (rainRafId) cancelAnimationFrame(rainRafId);
+  rainLastTs = 0;
+  rainRafId = requestAnimationFrame(tickBinaryRain);
 }
 
 function buildRainColumns(root, count = 6) {
@@ -357,25 +364,38 @@ function buildRainColumns(root, count = 6) {
   root.innerHTML = "";
   for (let i = 0; i < count; i++) {
     const x = 10 + i * 12;
-    const speed = 10 + Math.random() * 6;
+    for (let j = 0; j < 2; j++) {
+      const col = document.createElement("span");
+      col.className = "rain-col";
+      col.style.setProperty("--x", `${x}%`);
+      col.textContent = buildBinaryStream(76);
+      root.appendChild(col);
 
-    const colA = document.createElement("span");
-    colA.className = "rain-col";
-    colA.style.setProperty("--x", `${x}%`);
-    colA.style.setProperty("--speed", `${speed}s`);
-    colA.style.setProperty("--delay", `${-Math.random() * speed}s`);
-    colA.textContent = buildBinaryStream(58);
-
-    const colB = document.createElement("span");
-    colB.className = "rain-col";
-    colB.style.setProperty("--x", `${x}%`);
-    colB.style.setProperty("--speed", `${speed}s`);
-    colB.style.setProperty("--delay", `${-(speed / 2 + Math.random() * (speed / 2))}s`);
-    colB.textContent = buildBinaryStream(58);
-
-    root.appendChild(colA);
-    root.appendChild(colB);
+      rainStreams.push({
+        el: col,
+        y: -260 + Math.random() * 460, // percent range, includes offscreen
+        speed: 36 + Math.random() * 34, // percent / sec
+      });
+    }
   }
+}
+
+function tickBinaryRain(ts) {
+  if (!rainLastTs) rainLastTs = ts;
+  const dt = Math.min(0.05, (ts - rainLastTs) / 1000);
+  rainLastTs = ts;
+
+  for (const stream of rainStreams) {
+    stream.y += stream.speed * dt;
+    if (stream.y > 240) {
+      stream.y = -320 - Math.random() * 160;
+      stream.speed = 36 + Math.random() * 34;
+      if (Math.random() > 0.5) stream.el.textContent = buildBinaryStream(76);
+    }
+    stream.el.style.transform = `translate3d(0, ${stream.y}%, 0)`;
+  }
+
+  rainRafId = requestAnimationFrame(tickBinaryRain);
 }
 
 function buildBinaryStream(lines = 52) {
