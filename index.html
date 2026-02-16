@@ -50,7 +50,7 @@
           <h2 class="top-gap">补充偏好（可选）</h2>
           <details class="prompt-guide">
             <summary>不知道写什么？展开查看可用提示词类别</summary>
-            <p class="muted">你不需要全写，挑最在意的 3~6 条即可。越具体，生成越贴脸。</p>
+            <p class="muted">你不需要全写。越具体，生成越贴脸。</p>
             <ul>
               <li><strong>男主基础信息：</strong>年龄段、身高体型、五官特征、穿衣风格、标志物（耳钉/纹身/眼镜等）。</li>
               <li><strong>外貌细节：</strong>伤疤/旧伤、手部特征、气味、声音质地、是否有非人特征。</li>
@@ -81,7 +81,16 @@
               <button id="copyBtn" type="button" class="ghost">一键复制</button>
             </div>
             <p id="status" class="muted">等待生成…</p>
-            <article id="result" class="result"></article>
+
+            <details id="thinkingPanel" class="thinking-panel">
+              <summary id="thinkingSummary">思考过程（生成中）</summary>
+              <article id="thinkingContent" class="result muted">等待开始…</article>
+            </details>
+
+            <details id="resultPanel" class="result-wrap" open>
+              <summary>查看生成结果</summary>
+              <article id="result" class="result"></article>
+            </details>
           </div>
         </section>
 

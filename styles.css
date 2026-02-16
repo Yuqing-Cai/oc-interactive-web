@@ -179,7 +179,20 @@ button.ghost {
 .actions { display: flex; gap: 8px; margin-top: 10px; }
 
 .result-panel { margin-top: 14px; padding-top: 8px; }
-.result { white-space: pre-wrap; line-height: 1.65; }
+.result-wrap,
+.thinking-panel {
+  margin-top: 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--input-bg) 70%, transparent 30%);
+  padding: 8px 10px;
+}
+.result-wrap summary,
+.thinking-panel summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+.result { white-space: pre-wrap; line-height: 1.65; margin-top: 8px; }
 
 .selected-explain {
   border: 0;

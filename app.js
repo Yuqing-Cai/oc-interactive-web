@@ -70,6 +70,10 @@ const generateBtn = document.getElementById("generateBtn");
 const regenBtn = document.getElementById("regenBtn");
 const copyBtn = document.getElementById("copyBtn");
 const resultEl = document.getElementById("result");
+const resultPanelEl = document.getElementById("resultPanel");
+const thinkingPanelEl = document.getElementById("thinkingPanel");
+const thinkingSummaryEl = document.getElementById("thinkingSummary");
+const thinkingContentEl = document.getElementById("thinkingContent");
 const statusEl = document.getElementById("status");
 const extraPromptInput = document.getElementById("extraPrompt");
 const selectedExplainEl = document.getElementById("selectedExplain");
@@ -91,6 +95,15 @@ let optionDetailMap = new Map(); // P2 => long text
 let rainStreams = [];
 let rainRafId = 0;
 let rainLastTs = 0;
+
+const THINKING_STEPS = [
+  "正在解析已选轴与补充偏好…",
+  "正在评估设定冲突点与可兼容路径…",
+  "正在构建男主核心设定与世界切片…",
+  "正在对齐 MC 已知 / 未知信息层…",
+  "正在整理开场镜头与文本语气…",
+  "正在校验结构完整性与信息密度…",
+];
 
 renderAxes();
 updateSelectedCount();
@@ -226,14 +239,24 @@ async function generate(isRegenerate) {
   const startedAt = performance.now();
   const modeLabel = mode === "timeline" ? "完整时间线" : "开场静态";
   const actionLabel = isRegenerate ? "正在重新生成" : "正在生成";
+  let stepIndex = 0;
+
+  if (resultPanelEl) resultPanelEl.open = true;
+  if (thinkingPanelEl) thinkingPanelEl.open = true;
+  if (thinkingSummaryEl) thinkingSummaryEl.textContent = "思考过程（生成中）";
+  if (thinkingContentEl) thinkingContentEl.textContent = THINKING_STEPS[0];
 
   const updateProgress = () => {
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
     setStatus(`${actionLabel}（${modeLabel}，已思考 ${seconds.toFixed(1)} 秒）…`, false);
+    if (thinkingContentEl) {
+      stepIndex = (stepIndex + 1) % THINKING_STEPS.length;
+      thinkingContentEl.textContent = `${THINKING_STEPS[stepIndex]}\n当前已思考 ${seconds.toFixed(1)} 秒`;
+    }
   };
 
   updateProgress();
-  const timer = setInterval(updateProgress, 100);
+  const timer = setInterval(updateProgress, 1000);
 
   try {
     const response = await fetch(apiUrl, {
@@ -246,8 +269,13 @@ async function generate(isRegenerate) {
     resultEl.textContent = data.content;
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
     setStatus(`生成完成（已思考 ${seconds.toFixed(1)} 秒）。`, false);
+    if (thinkingSummaryEl) thinkingSummaryEl.textContent = `思考过程（已完成，用时 ${seconds.toFixed(1)} 秒）`;
+    if (thinkingPanelEl) thinkingPanelEl.open = false;
+    if (resultPanelEl) resultPanelEl.open = true;
   } catch (err) {
     setStatus(`错误：${err.message}`, true);
+    if (thinkingSummaryEl) thinkingSummaryEl.textContent = "思考过程（生成失败）";
+    if (thinkingPanelEl) thinkingPanelEl.open = true;
   } finally {
     clearInterval(timer);
     setLoading(false);
