@@ -172,7 +172,6 @@ function clearSelections() {
 function renderSelectedExplain(selected) {
   if (!selected.length) {
     selectedExplainEl.innerHTML = `<p class="muted">还没有选中轴要素。先勾选，此处会显示对应细分解释。</p>`;
-    applyExplainBoxHeight(0);
     return;
   }
 
@@ -184,14 +183,6 @@ function renderSelectedExplain(selected) {
       <p>${escapeHtml(getOptionLong(item.code, 420))}</p>
     </section>`;
   }).join("");
-  applyExplainBoxHeight(selected.length);
-}
-
-function applyExplainBoxHeight(count) {
-  const minVh = 22;
-  const maxVh = 68;
-  const targetVh = Math.min(maxVh, minVh + count * 7);
-  selectedExplainEl.style.maxHeight = `${targetVh}vh`;
 }
 
 function getOptionLong(code, max = 500) {
