@@ -109,14 +109,6 @@ let rainStreams = [];
 let rainRafId = 0;
 let rainLastTs = 0;
 
-const THINKING_STEPS = [
-  "正在解析已选轴与补充偏好…",
-  "正在评估设定冲突点与可兼容路径…",
-  "正在构建男主核心设定与世界切片…",
-  "正在对齐 MC 已知 / 未知信息层…",
-  "正在整理开场镜头与文本语气…",
-  "正在校验结构完整性与信息密度…",
-];
 
 renderAxes();
 updateSelectedCount();
@@ -256,24 +248,21 @@ async function generate(isRegenerate) {
   const startedAt = performance.now();
   const modeLabel = mode === "timeline" ? "完整时间线" : "开场静态";
   const actionLabel = isRegenerate ? "正在重新生成" : "正在生成";
-  let stepIndex = 0;
 
   if (resultPanelEl) resultPanelEl.open = true;
   if (thinkingPanelEl) thinkingPanelEl.open = true;
-  if (thinkingSummaryEl) thinkingSummaryEl.textContent = "思考过程（生成中）";
-  if (thinkingContentEl) thinkingContentEl.textContent = THINKING_STEPS[0];
+  if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（生成中）";
 
   const updateProgress = () => {
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
     setStatus(`${actionLabel}（${modeLabel}，已思考 ${seconds.toFixed(1)} 秒）…`, false);
     if (thinkingContentEl) {
-      stepIndex = (stepIndex + 1) % THINKING_STEPS.length;
-      thinkingContentEl.textContent = `${THINKING_STEPS[stepIndex]}\n当前已思考 ${seconds.toFixed(1)} 秒`;
+      thinkingContentEl.textContent = `- 请求已发送\n- 模型生成中\n- 当前已思考 ${seconds.toFixed(1)} 秒`;
     }
   };
 
   updateProgress();
-  const timer = setInterval(updateProgress, 1000);
+  const timer = setInterval(updateProgress, 500);
 
   try {
     const response = await fetch(apiUrl, {
@@ -283,15 +272,20 @@ async function generate(isRegenerate) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || "生成失败");
+
     resultEl.textContent = data.content;
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
     setStatus(`生成完成（已思考 ${seconds.toFixed(1)} 秒）。`, false);
-    if (thinkingSummaryEl) thinkingSummaryEl.textContent = `思考过程（已完成，用时 ${seconds.toFixed(1)} 秒）`;
+
+    if (thinkingSummaryEl) thinkingSummaryEl.textContent = `系统状态（已完成，用时 ${seconds.toFixed(1)} 秒）`;
+    if (thinkingContentEl) thinkingContentEl.textContent = formatTrace(data?.meta?.trace, data?.meta?.repaired, data?.meta?.mode, data?.meta?.totalMs);
+
     if (thinkingPanelEl) thinkingPanelEl.open = false;
     if (resultPanelEl) resultPanelEl.open = true;
   } catch (err) {
     setStatus(`错误：${err.message}`, true);
-    if (thinkingSummaryEl) thinkingSummaryEl.textContent = "思考过程（生成失败）";
+    if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（生成失败）";
+    if (thinkingContentEl) thinkingContentEl.textContent = `- 请求失败\n- ${err.message}`;
     if (thinkingPanelEl) thinkingPanelEl.open = true;
   } finally {
     clearInterval(timer);
@@ -307,6 +301,40 @@ function setLoading(loading) {
 function setStatus(text, isError) {
   statusEl.textContent = text;
   statusEl.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
+}
+
+function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0) {
+  if (!Array.isArray(trace) || !trace.length) {
+    const sec = totalMs ? (totalMs / 1000).toFixed(1) : "-";
+    return `- 模型阶段日志不可用\n- 模式：${mode || "未知"}\n- 自动修复：${repaired ? "触发" : "未触发"}\n- 总耗时：${sec} 秒`;
+  }
+
+  const labelMap = {
+    request_received: "收到生成请求",
+    mode_decided: "确定生成模式",
+    upstream_request_started: "向模型发起请求",
+    upstream_response_received: "收到模型初稿",
+    output_validated: "完成结构校验",
+    repair_started: "触发自动修复",
+    repair_applied: "已应用修复结果",
+    repair_empty: "修复返回空内容（已忽略）",
+    repair_failed: "修复请求失败",
+    repair_skipped: "无需修复",
+    upstream_error: "模型请求失败",
+    completed: "生成流程完成",
+  };
+
+  const lines = trace.map((item) => {
+    const sec = (Number(item.t || 0) / 1000).toFixed(1);
+    const label = labelMap[item.stage] || item.stage;
+    return `- [${sec}s] ${label}`;
+  });
+
+  const totalSec = totalMs ? (totalMs / 1000).toFixed(1) : (Number(trace.at(-1)?.t || 0) / 1000).toFixed(1);
+  lines.push(`- 自动修复：${repaired ? "触发" : "未触发"}`);
+  lines.push(`- 模式：${mode || "未知"}`);
+  lines.push(`- 总耗时：${totalSec} 秒`);
+  return lines.join("\n");
 }
 
 async function copyResult() {

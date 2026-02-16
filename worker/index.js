@@ -27,10 +27,18 @@ export default {
         return json({ error: "OPENAI_API_KEY is missing." }, 500);
       }
 
+      const trace = [];
+      const startedAt = Date.now();
+      const mark = (stage, extra = {}) => trace.push({ stage, t: Date.now() - startedAt, ...extra });
+
+      mark("request_received", { selections: selections.length });
       const mode = detectMode(selections);
+      mark("mode_decided", { mode });
+
       const systemPrompt = buildSystemPrompt(mode);
       const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
+      mark("upstream_request_started");
       const upstream = await fetch(apiUrl, {
         method: "POST",
         headers: {
@@ -49,9 +57,11 @@ export default {
 
       if (!upstream.ok) {
         const text = await upstream.text();
+        mark("upstream_error", { status: upstream.status });
         return json({ error: `Upstream error: ${text}` }, upstream.status);
       }
 
+      mark("upstream_response_received");
       const data = await upstream.json();
       const rawContent = data?.choices?.[0]?.message?.content;
       let content = sanitizeModelOutput(rawContent);
@@ -61,8 +71,12 @@ export default {
       }
 
       const check = validateOutput(content, mode);
+      mark("output_validated", { ok: check.ok, missing: check.missing.length });
+
+      let repaired = false;
       if (!check.ok) {
         const repairPrompt = buildRepairPrompt(content, check.missing, mode);
+        mark("repair_started");
         const repairUpstream = await fetch(apiUrl, {
           method: "POST",
           headers: {
@@ -85,12 +99,23 @@ export default {
 
         if (repairUpstream.ok) {
           const repairData = await repairUpstream.json();
-          const repaired = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
-          if (repaired) content = repaired;
+          const repairedContent = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
+          if (repairedContent) {
+            content = repairedContent;
+            repaired = true;
+            mark("repair_applied");
+          } else {
+            mark("repair_empty");
+          }
+        } else {
+          mark("repair_failed", { status: repairUpstream.status });
         }
+      } else {
+        mark("repair_skipped");
       }
 
-      return json({ content }, 200);
+      mark("completed", { repaired });
+      return json({ content, meta: { mode, repaired, trace, totalMs: Date.now() - startedAt } }, 200);
     } catch (err) {
       return json({ error: err.message || "Unexpected error" }, 500);
     }
