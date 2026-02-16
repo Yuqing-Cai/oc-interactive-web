@@ -1,154 +1,279 @@
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders() });
     }
 
     const url = new URL(request.url);
-    if (url.pathname !== "/generate") {
-      return json({ error: "Not Found" }, 404);
+    if (url.pathname === "/generate" && request.method === "POST") {
+      return handleGenerateJson(request, env);
     }
 
-    if (request.method !== "POST") {
+    if (url.pathname === "/generate-stream" && request.method === "POST") {
+      return handleGenerateStream(request, env, ctx);
+    }
+
+    if (url.pathname === "/generate" || url.pathname === "/generate-stream") {
       return json({ error: "Method Not Allowed" }, 405);
     }
 
-    try {
-      const body = await request.json();
-      const { selections = [], model = "MiniMax-M2.5", extraPrompt = "" } = body || {};
-
-      if (!Array.isArray(selections) || selections.length < 3) {
-        return json({ error: "At least 3 selections are required." }, 400);
-      }
-
-      const apiKey = env.OPENAI_API_KEY;
-      const apiUrl = env.OPENAI_API_URL || "https://api.minimax.chat/v1/chat/completions";
-      if (!apiKey) {
-        return json({ error: "OPENAI_API_KEY is missing." }, 500);
-      }
-
-      const trace = [];
-      const startedAt = Date.now();
-      const mark = (stage, extra = {}) => trace.push({ stage, t: Date.now() - startedAt, ...extra });
-
-      mark("request_received", { selections: selections.length });
-      const mode = detectMode(selections);
-      mark("mode_decided", { mode });
-
-      const systemPrompt = buildSystemPrompt(mode);
-      const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
-
-      const payload = {
-        model,
-        temperature: 0.9,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      };
-
-      let upstream;
-      mark("upstream_request_started", { model });
-      try {
-        upstream = await fetchWithTimeout(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(payload),
-        }, 85000);
-      } catch (err) {
-        if (err?.name === "TimeoutError") {
-          const fallbackModel = env.FALLBACK_MODEL || "MiniMax-M2.1-lightning";
-          mark("upstream_timeout", { model, fallbackModel });
-          mark("fallback_request_started", { model: fallbackModel });
-          upstream = await fetchWithTimeout(apiUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({ ...payload, model: fallbackModel, temperature: 0.8 }),
-          }, 60000);
-          mark("fallback_response_received", { status: upstream.status });
-        } else {
-          throw err;
-        }
-      }
-
-      if (!upstream.ok) {
-        const text = await upstream.text();
-        mark("upstream_error", { status: upstream.status });
-        return json({ error: `Upstream error: ${text}` }, upstream.status);
-      }
-
-      mark("upstream_response_received");
-      const data = await upstream.json();
-      const rawContent = data?.choices?.[0]?.message?.content;
-      let content = sanitizeModelOutput(rawContent);
-
-      if (!content) {
-        return json({ error: "No content in model response.", raw: data }, 502);
-      }
-
-      const check = validateOutput(content, mode);
-      mark("output_validated", { ok: check.ok, missing: check.missing.length });
-
-      let repaired = false;
-      if (!check.ok) {
-        const repairPrompt = buildRepairPrompt(content, check.missing, mode);
-        mark("repair_started");
-        const repairUpstream = await fetchWithTimeout(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            temperature: 0.6,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "你是文本修复器。仅输出最终成稿，不要解释修复过程，不要输出任何注释、前言、后记、思考过程。",
-              },
-              { role: "user", content: repairPrompt },
-            ],
-          }),
-        }, 25000);
-
-        if (repairUpstream.ok) {
-          const repairData = await repairUpstream.json();
-          const repairedContent = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
-          if (repairedContent) {
-            content = repairedContent;
-            repaired = true;
-            mark("repair_applied");
-          } else {
-            mark("repair_empty");
-          }
-        } else {
-          mark("repair_failed", { status: repairUpstream.status });
-        }
-      } else {
-        mark("repair_skipped");
-      }
-
-      mark("completed", { repaired });
-      return json({ content, meta: { mode, repaired, trace, totalMs: Date.now() - startedAt } }, 200);
-    } catch (err) {
-      if (err?.name === "TimeoutError") {
-        return json({
-          error: "模型响应超时（超过可用时长）。请减少补充偏好复杂度，或重试一次。",
-          code: "UPSTREAM_TIMEOUT",
-        }, 504);
-      }
-      return json({ error: err.message || "Unexpected error" }, 500);
-    }
+    return json({ error: "Not Found" }, 404);
   },
 };
+
+async function handleGenerateJson(request, env) {
+  try {
+    const body = await request.json();
+    const result = await runGeneration(body, env);
+    return json({ content: result.content, meta: result.meta }, 200);
+  } catch (err) {
+    return mapErrorToResponse(err);
+  }
+}
+
+async function handleGenerateStream(request, env, ctx) {
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  const send = async (payload) => {
+    await writer.write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+  };
+
+  const close = async () => {
+    try {
+      await writer.close();
+    } catch {}
+  };
+
+  const streamTask = (async () => {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      await send({ type: "error", error: "请求体不是有效 JSON。" });
+      await close();
+      return;
+    }
+
+    try {
+      const result = await runGeneration(body, env, {
+        onStage: async (stage) => send({ type: "stage", ...stage }),
+      });
+
+      await send({
+        type: "done",
+        content: result.content,
+        meta: result.meta,
+      });
+    } catch (err) {
+      const mapped = mapError(err);
+      await send({ type: "error", error: mapped.message, code: mapped.code || "GEN_ERROR" });
+    } finally {
+      await close();
+    }
+  })();
+
+  ctx?.waitUntil(streamTask);
+
+  return new Response(readable, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      ...corsHeaders(),
+    },
+  });
+}
+
+async function runGeneration(body, env, hooks = {}) {
+  const { selections = [], model = "MiniMax-M2.5", extraPrompt = "" } = body || {};
+
+  if (!Array.isArray(selections) || selections.length < 3) {
+    const e = new Error("At least 3 selections are required.");
+    e.status = 400;
+    throw e;
+  }
+
+  const apiKey = env.OPENAI_API_KEY;
+  const apiUrl = env.OPENAI_API_URL || "https://api.minimax.chat/v1/chat/completions";
+  if (!apiKey) {
+    const e = new Error("OPENAI_API_KEY is missing.");
+    e.status = 500;
+    throw e;
+  }
+
+  const trace = [];
+  const startedAt = Date.now();
+  const mark = (stage, extra = {}) => {
+    const row = { stage, t: Date.now() - startedAt, ...extra };
+    trace.push(row);
+    if (hooks.onStage) hooks.onStage(row);
+  };
+
+  mark("request_received", { selections: selections.length });
+  const mode = detectMode(selections);
+  mark("mode_decided", { mode });
+
+  const systemPrompt = buildSystemPrompt(mode);
+  const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
+
+  const payload = {
+    model,
+    temperature: 0.9,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+  };
+
+  let upstream;
+  let finalModel = model;
+  mark("upstream_request_started", { model });
+  try {
+    upstream = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      },
+      70000
+    );
+  } catch (err) {
+    if (err?.name === "TimeoutError") {
+      const fallbackModel = (env.FALLBACK_MODEL || "").trim();
+      mark("upstream_timeout", { model, fallbackModel: fallbackModel || "<disabled>" });
+
+      if (!fallbackModel) {
+        throw err;
+      }
+
+      mark("fallback_request_started", { model: fallbackModel });
+      finalModel = fallbackModel;
+      upstream = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ ...payload, model: fallbackModel, temperature: 0.8 }),
+        },
+        28000
+      );
+      mark("fallback_response_received", { status: upstream.status });
+    } else {
+      throw err;
+    }
+  }
+
+  if (!upstream.ok) {
+    const text = await upstream.text();
+    mark("upstream_error", { status: upstream.status });
+    const e = new Error(`Upstream error: ${text}`);
+    e.status = upstream.status;
+    throw e;
+  }
+
+  mark("upstream_response_received");
+  const data = await upstream.json();
+  const rawContent = data?.choices?.[0]?.message?.content;
+  let content = sanitizeModelOutput(rawContent);
+
+  if (!content) {
+    const e = new Error("No content in model response.");
+    e.status = 502;
+    throw e;
+  }
+
+  const check = validateOutput(content, mode);
+  mark("output_validated", { ok: check.ok, missing: check.missing.length });
+
+  let repaired = false;
+  if (!check.ok) {
+    const repairPrompt = buildRepairPrompt(content, check.missing, mode);
+    mark("repair_started");
+    const repairUpstream = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.6,
+          messages: [
+            {
+              role: "system",
+              content:
+                "你是文本修复器。仅输出最终成稿，不要解释修复过程，不要输出任何注释、前言、后记、思考过程。",
+            },
+            { role: "user", content: repairPrompt },
+          ],
+        }),
+      },
+      12000
+    );
+
+    if (repairUpstream.ok) {
+      const repairData = await repairUpstream.json();
+      const repairedContent = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
+      if (repairedContent) {
+        content = repairedContent;
+        repaired = true;
+        mark("repair_applied");
+      } else {
+        mark("repair_empty");
+      }
+    } else {
+      mark("repair_failed", { status: repairUpstream.status });
+    }
+  } else {
+    mark("repair_skipped");
+  }
+
+  mark("completed", { repaired });
+  return {
+    content,
+    meta: {
+      mode,
+      repaired,
+      trace,
+      totalMs: Date.now() - startedAt,
+      finalModel,
+      fallbackUsed: finalModel !== model,
+    },
+  };
+}
+
+function mapError(err) {
+  if (err?.name === "TimeoutError") {
+    return {
+      status: 504,
+      code: "UPSTREAM_TIMEOUT",
+      message:
+        "模型响应超时（已达到服务端等待上限）。通常是上游生成耗时过长或短时波动，不代表你的本地网络有问题。",
+    };
+  }
+  return {
+    status: err?.status || 500,
+    code: err?.code || "UNEXPECTED_ERROR",
+    message: err?.message || "Unexpected error",
+  };
+}
+
+function mapErrorToResponse(err) {
+  const mapped = mapError(err);
+  return json({ error: mapped.message, code: mapped.code }, mapped.status);
+}
 
 function detectMode(selections) {
   const axes = new Set(selections.map((s) => String(s.axis || "").trim().toUpperCase()));
@@ -238,32 +363,33 @@ function sanitizeModelOutput(text) {
 }
 
 function validateOutput(content, mode) {
-  const requiredTitles = mode === "timeline"
-    ? [
-        "1) 设定总览（玩家上帝视角）",
-        "2) 男主完整档案（玩家上帝视角）",
-        "3) 世界观与时代切片（玩家上帝视角）",
-        "4) MC视角情报（她知道 / 不知道）",
-        "5) 关系初始动力学（此刻已成立）",
-        "6) 三幕时间线骨架（细节留白）",
-        "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
-        "8) 选轴映射说明",
-        "9) 矛盾度与取舍说明",
-        "10) 下次重生成建议",
-        "11) 开场片段（250~450字，MC第一视角）",
-      ]
-    : [
-        "1) 设定总览（玩家上帝视角）",
-        "2) 男主完整档案（玩家上帝视角）",
-        "3) 世界观与时代切片（玩家上帝视角）",
-        "4) MC视角情报（她知道 / 不知道）",
-        "5) 关系初始动力学（此刻已成立）",
-        "6) 选轴映射说明",
-        "7) 开场时刻场景锚点",
-        "8) 矛盾度与取舍说明",
-        "9) 下次重生成建议",
-        "10) 开场片段（300~500字，MC第一视角）",
-      ];
+  const requiredTitles =
+    mode === "timeline"
+      ? [
+          "1) 设定总览（玩家上帝视角）",
+          "2) 男主完整档案（玩家上帝视角）",
+          "3) 世界观与时代切片（玩家上帝视角）",
+          "4) MC视角情报（她知道 / 不知道）",
+          "5) 关系初始动力学（此刻已成立）",
+          "6) 三幕时间线骨架（细节留白）",
+          "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
+          "8) 选轴映射说明",
+          "9) 矛盾度与取舍说明",
+          "10) 下次重生成建议",
+          "11) 开场片段（250~450字，MC第一视角）",
+        ]
+      : [
+          "1) 设定总览（玩家上帝视角）",
+          "2) 男主完整档案（玩家上帝视角）",
+          "3) 世界观与时代切片（玩家上帝视角）",
+          "4) MC视角情报（她知道 / 不知道）",
+          "5) 关系初始动力学（此刻已成立）",
+          "6) 选轴映射说明",
+          "7) 开场时刻场景锚点",
+          "8) 矛盾度与取舍说明",
+          "9) 下次重生成建议",
+          "10) 开场片段（300~500字，MC第一视角）",
+        ];
 
   const missing = requiredTitles.filter((t) => !content.includes(t));
   const minLength = mode === "timeline" ? 1400 : 1200;

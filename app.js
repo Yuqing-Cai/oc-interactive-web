@@ -237,6 +237,7 @@ function trim(text, max) {
 
 async function generate(isRegenerate) {
   const apiUrl = FIXED_API_URL;
+  const streamUrl = apiUrl.replace(/\/generate$/, "/generate-stream");
   const model = FIXED_MODEL;
   const extraPrompt = extraPromptInput.value.trim();
   const selections = getSelected().map(({ axis, option }) => ({ axis, option }));
@@ -251,16 +252,15 @@ async function generate(isRegenerate) {
 
   if (resultPanelEl) resultPanelEl.open = true;
   if (thinkingPanelEl) thinkingPanelEl.open = true;
-  if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（生成中）";
+  if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（实时同步中）";
 
+  const liveTrace = [];
   const updateProgress = () => {
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
-    setStatus(`${actionLabel}（${modeLabel}，已思考 ${seconds.toFixed(1)} 秒）…`, false);
-    if (thinkingContentEl) {
+    setStatus(`${actionLabel}（${modeLabel}，已运行 ${seconds.toFixed(1)} 秒）…`, false);
+    if (thinkingContentEl && !liveTrace.length) {
       thinkingContentEl.innerHTML = `<div class="trace-log">
-        <div class="trace-item"><span class="trace-time">进行中</span><span class="trace-text">请求已发送</span></div>
-        <div class="trace-item"><span class="trace-time">进行中</span><span class="trace-text">模型生成中</span></div>
-        <div class="trace-item"><span class="trace-time">${seconds.toFixed(1)}s</span><span class="trace-text">当前已思考</span></div>
+        <div class="trace-item"><span class="trace-time">进行中</span><span class="trace-text">请求已发送，等待服务端阶段回传…</span></div>
       </div>`;
     }
   };
@@ -271,43 +271,82 @@ async function generate(isRegenerate) {
   let requestTimer = null;
   try {
     const requestCtrl = new AbortController();
-    requestTimer = setTimeout(() => requestCtrl.abort(), 97000);
-    const response = await fetch(apiUrl, {
+    requestTimer = setTimeout(() => requestCtrl.abort(), 98000);
+
+    const response = await fetch(streamUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selections, model, extraPrompt }),
       signal: requestCtrl.signal,
     });
 
-    let data = null;
-    let rawText = "";
-    try {
-      data = await response.json();
-    } catch {
-      rawText = await response.text().catch(() => "");
-    }
-
     if (!response.ok) {
-      const detail = data?.error || rawText || `HTTP ${response.status}`;
-      throw new Error(detail);
+      const text = await response.text().catch(() => "");
+      throw new Error(text || `HTTP ${response.status}`);
     }
 
-    if (!data) throw new Error("服务返回了非 JSON 响应，请稍后重试。");
+    if (!response.body) throw new Error("流式响应不可用。");
 
-    resultEl.textContent = data.content;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalContent = "";
+    let finalMeta = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const block of parts) {
+        const line = block.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+
+        let evt = null;
+        try {
+          evt = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+
+        if (evt?.type === "stage") {
+          liveTrace.push({ stage: evt.stage, t: evt.t || 0 });
+          if (thinkingContentEl) thinkingContentEl.innerHTML = formatTrace(liveTrace, false, mode, evt.t || 0);
+        } else if (evt?.type === "done") {
+          finalContent = evt.content || "";
+          finalMeta = evt.meta || null;
+        } else if (evt?.type === "error") {
+          throw new Error(evt.error || "流式生成失败");
+        }
+      }
+    }
+
+    if (!finalContent) throw new Error("服务端未返回最终内容。请重试。");
+
+    resultEl.textContent = finalContent;
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
-    setStatus(`生成完成（已思考 ${seconds.toFixed(1)} 秒）。`, false);
+    setStatus(`生成完成（已运行 ${seconds.toFixed(1)} 秒）。`, false);
 
     if (thinkingSummaryEl) thinkingSummaryEl.textContent = `系统状态（已完成，用时 ${seconds.toFixed(1)} 秒）`;
-    if (thinkingContentEl) thinkingContentEl.innerHTML = formatTrace(data?.meta?.trace, data?.meta?.repaired, data?.meta?.mode, data?.meta?.totalMs);
+    if (thinkingContentEl) {
+      thinkingContentEl.innerHTML = formatTrace(
+        finalMeta?.trace || liveTrace,
+        finalMeta?.repaired,
+        finalMeta?.mode || mode,
+        finalMeta?.totalMs,
+        { finalModel: finalMeta?.finalModel, fallbackUsed: finalMeta?.fallbackUsed }
+      );
+    }
 
-    if (thinkingPanelEl) thinkingPanelEl.open = false;
+    if (thinkingPanelEl) thinkingPanelEl.open = true;
     if (resultPanelEl) resultPanelEl.open = true;
   } catch (err) {
     const msg = err?.name === "AbortError"
-      ? "请求超时（约97秒）。可能是网络链路或上游模型耗时过长，请重试。"
+      ? "请求超时（约98秒）。请重试。"
       : (err?.name === "TypeError"
-        ? "网络层请求失败（可能是跨域/CDN边缘错误或临时断网）。请稍后重试。"
+        ? "网络层请求失败（可能是边缘连接被中断/跨域链路异常，并不一定是你本地断网）。请重试。"
         : (err?.message || "未知错误"));
     setStatus(`错误：${msg}`, true);
     if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（生成失败）";
@@ -330,12 +369,12 @@ function setStatus(text, isError) {
   statusEl.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
 }
 
-function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0) {
+function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra = {}) {
   const labelMap = {
     request_received: "收到生成请求",
     mode_decided: "确定生成模式",
     upstream_request_started: "向模型发起请求",
-    upstream_timeout: "主模型超时，准备降级重试",
+    upstream_timeout: "主模型超时（若配置了降级模型将重试）",
     fallback_request_started: "已切换快速模型重试",
     fallback_response_received: "快速模型返回结果",
     upstream_response_received: "收到模型初稿",
@@ -349,23 +388,72 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0) {
     completed: "生成流程完成",
   };
 
+  const stageOrder = [
+    "request_received",
+    "mode_decided",
+    "upstream_request_started",
+    "upstream_response_received",
+    "output_validated",
+    "repair_started",
+    "repair_applied",
+    "repair_skipped",
+    "completed",
+  ];
+
   const items = Array.isArray(trace) ? trace : [];
+  const reached = new Set(items.map((i) => i.stage));
+  const completed = reached.has("completed");
+  const progress = completed
+    ? 100
+    : Math.min(95, Math.round((Math.max(1, reached.size) / stageOrder.length) * 100));
+
   const rows = items.length
-    ? items.map((item) => {
-        const sec = (Number(item.t || 0) / 1000).toFixed(1);
-        const label = escapeHtml(labelMap[item.stage] || item.stage || "未知阶段");
-        return `<div class="trace-item"><span class="trace-time">${sec}s</span><span class="trace-text">${label}</span></div>`;
-      }).join("")
+    ? items
+        .map((item) => {
+          const sec = (Number(item.t || 0) / 1000).toFixed(1);
+          const label = escapeHtml(labelMap[item.stage] || item.stage || "未知阶段");
+          return `<div class="trace-item"><span class="trace-time">${sec}s</span><span class="trace-text">${label}</span></div>`;
+        })
+        .join("")
     : `<div class="trace-item"><span class="trace-time">-</span><span class="trace-text">模型阶段日志不可用</span></div>`;
+
+  const timingRows = items.length > 1
+    ? items.slice(1).map((item, idx) => {
+        const prev = Number(items[idx]?.t || 0);
+        const cur = Number(item.t || 0);
+        const cost = Math.max(0, (cur - prev) / 1000).toFixed(2);
+        const label = escapeHtml(labelMap[item.stage] || item.stage || "未知阶段");
+        return `<tr><td>${label}</td><td style="text-align:right;">${cost}s</td></tr>`;
+      }).join("")
+    : "";
+
+  const timingTable = timingRows
+    ? `<div style="margin:10px 0 8px 0;">
+        <div style="font-size:12px;opacity:.85;margin-bottom:6px;">阶段耗时拆解</div>
+        <table style="width:100%;font-size:12px;border-collapse:collapse;">
+          <thead><tr><th style="text-align:left;opacity:.7;">阶段</th><th style="text-align:right;opacity:.7;">耗时</th></tr></thead>
+          <tbody>${timingRows}</tbody>
+        </table>
+      </div>`
+    : "";
 
   const totalSec = totalMs
     ? (totalMs / 1000).toFixed(1)
     : (Number(items.at(-1)?.t || 0) / 1000).toFixed(1);
 
-  return `<div class="trace-log">${rows}</div>
+  const bar = `<div style="margin:8px 0 10px 0;">
+      <div style="height:8px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;">
+        <div style="height:100%;width:${progress}%;background:linear-gradient(90deg,#22d3ee,#06b6d4);"></div>
+      </div>
+      <div style="margin-top:6px;font-size:12px;opacity:.85;">阶段进度：${progress}%</div>
+    </div>`;
+
+  return `${bar}<div class="trace-log">${rows}</div>${timingTable}
     <div class="trace-meta">
       <div>自动修复：${repaired ? "触发" : "未触发"}</div>
       <div>模式：${escapeHtml(mode || "未知")}</div>
+      <div>实际模型：${escapeHtml(extra?.finalModel || FIXED_MODEL)}</div>
+      <div>降级重试：${extra?.fallbackUsed ? "是" : "否"}</div>
       <div>总耗时：${totalSec} 秒</div>
     </div>`;
 }
