@@ -64,6 +64,7 @@ const AXIS_GUIDE = {
 const axisContainer = document.getElementById("axisContainer");
 const selectedCountEl = document.getElementById("selectedCount");
 const clearBtn = document.getElementById("clearBtn");
+const clearBtnBottom = document.getElementById("clearBtnBottom");
 const modeBadgeEl = document.getElementById("modeBadge");
 const generateBtn = document.getElementById("generateBtn");
 const regenBtn = document.getElementById("regenBtn");
@@ -91,6 +92,7 @@ updateSelectedCount();
 loadDocForExplanations();
 
 clearBtn.addEventListener("click", clearSelections);
+if (clearBtnBottom) clearBtnBottom.addEventListener("click", clearSelections);
 generateBtn.addEventListener("click", () => generate(false));
 regenBtn.addEventListener("click", () => generate(true));
 copyBtn.addEventListener("click", copyResult);
