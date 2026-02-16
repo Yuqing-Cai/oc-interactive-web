@@ -39,7 +39,7 @@ export default {
       const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
       mark("upstream_request_started");
-      const upstream = await fetch(apiUrl, {
+      const upstream = await fetchWithTimeout(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -53,7 +53,7 @@ export default {
             { role: "user", content: userPrompt },
           ],
         }),
-      });
+      }, 85000);
 
       if (!upstream.ok) {
         const text = await upstream.text();
@@ -77,7 +77,7 @@ export default {
       if (!check.ok) {
         const repairPrompt = buildRepairPrompt(content, check.missing, mode);
         mark("repair_started");
-        const repairUpstream = await fetch(apiUrl, {
+        const repairUpstream = await fetchWithTimeout(apiUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -95,7 +95,7 @@ export default {
               { role: "user", content: repairPrompt },
             ],
           }),
-        });
+        }, 25000);
 
         if (repairUpstream.ok) {
           const repairData = await repairUpstream.json();
@@ -117,6 +117,12 @@ export default {
       mark("completed", { repaired });
       return json({ content, meta: { mode, repaired, trace, totalMs: Date.now() - startedAt } }, 200);
     } catch (err) {
+      if (err?.name === "TimeoutError") {
+        return json({
+          error: "模型响应超时（超过可用时长）。请减少补充偏好复杂度，或重试一次。",
+          code: "UPSTREAM_TIMEOUT",
+        }, 504);
+      }
       return json({ error: err.message || "Unexpected error" }, 500);
     }
   },
@@ -258,6 +264,23 @@ function buildRepairPrompt(draft, missing, mode) {
     "初稿：",
     draft,
   ].join("\n");
+}
+
+async function fetchWithTimeout(url, init, timeoutMs = 85000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      const e = new Error("Upstream request timed out");
+      e.name = "TimeoutError";
+      throw e;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function corsHeaders() {

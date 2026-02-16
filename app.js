@@ -268,11 +268,15 @@ async function generate(isRegenerate) {
   updateProgress();
   const timer = setInterval(updateProgress, 500);
 
+  let requestTimer = null;
   try {
+    const requestCtrl = new AbortController();
+    requestTimer = setTimeout(() => requestCtrl.abort(), 97000);
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selections, model, extraPrompt }),
+      signal: requestCtrl.signal,
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || "生成失败");
@@ -287,11 +291,15 @@ async function generate(isRegenerate) {
     if (thinkingPanelEl) thinkingPanelEl.open = false;
     if (resultPanelEl) resultPanelEl.open = true;
   } catch (err) {
-    setStatus(`错误：${err.message}`, true);
+    const msg = err?.name === "AbortError"
+      ? "请求超时（约97秒）。可能是网络链路或上游模型耗时过长，请重试。"
+      : (err?.message || "未知错误");
+    setStatus(`错误：${msg}`, true);
     if (thinkingSummaryEl) thinkingSummaryEl.textContent = "系统状态（生成失败）";
-    if (thinkingContentEl) thinkingContentEl.textContent = `- 请求失败\n- ${err.message}`;
+    if (thinkingContentEl) thinkingContentEl.textContent = `- 请求失败\n- ${msg}`;
     if (thinkingPanelEl) thinkingPanelEl.open = true;
   } finally {
+    if (requestTimer) clearTimeout(requestTimer);
     clearInterval(timer);
     setLoading(false);
   }
