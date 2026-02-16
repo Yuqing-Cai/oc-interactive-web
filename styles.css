@@ -42,26 +42,25 @@ body {
   position: fixed;
   top: 0;
   bottom: 0;
-  width: min(10vw, 140px);
-  padding: 8px 10px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  width: min(11vw, 156px);
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
-  mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, black 8%, black 92%, transparent);
 }
 .side-rain-left { left: 0; }
 .side-rain-right { right: 0; }
 .rain-col {
-  writing-mode: vertical-rl;
-  text-orientation: upright;
+  position: absolute;
+  top: -120%;
+  left: var(--x, 0%);
+  width: 14px;
+  white-space: pre;
+  line-height: 1.05;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
-  letter-spacing: 1px;
   color: color-mix(in srgb, var(--neon) 72%, transparent 28%);
-  opacity: .55;
+  opacity: .52;
   text-shadow: 0 0 8px color-mix(in srgb, var(--neon) 45%, transparent 55%);
   animation: binary-fall var(--speed, 12s) linear infinite;
   animation-delay: var(--delay, 0s);
@@ -69,7 +68,7 @@ body {
 
 @keyframes binary-fall {
   from { transform: translateY(-120%); }
-  to { transform: translateY(120%); }
+  to { transform: translateY(240%); }
 }
 
 .shell { max-width: 1460px; margin: 0 auto; padding: 16px; position: relative; z-index: 1; }

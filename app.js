@@ -76,6 +76,8 @@ const selectedExplainEl = document.getElementById("selectedExplain");
 const insightPanel = document.getElementById("insightPanel");
 const mobileInsightToggle = document.getElementById("mobileInsightToggle");
 const themeSelect = document.getElementById("themeSelect");
+const sideRainLeft = document.getElementById("sideRainLeft");
+const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
 const FIXED_MODEL = "MiniMax-M2.5";
@@ -90,6 +92,7 @@ let optionDetailMap = new Map(); // P2 => long text
 renderAxes();
 updateSelectedCount();
 loadDocForExplanations();
+initBinaryRain();
 
 clearBtn.addEventListener("click", clearSelections);
 if (clearBtnBottom) clearBtnBottom.addEventListener("click", clearSelections);
@@ -342,6 +345,34 @@ function cleanMarkdown(str) {
     .replace(/^\s*---\s*$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function initBinaryRain() {
+  buildRainColumns(sideRainLeft, 7);
+  buildRainColumns(sideRainRight, 7);
+}
+
+function buildRainColumns(root, count = 6) {
+  if (!root) return;
+  root.innerHTML = "";
+  for (let i = 0; i < count; i++) {
+    const col = document.createElement("span");
+    col.className = "rain-col";
+    col.style.setProperty("--x", `${10 + i * 12}%`);
+    col.style.setProperty("--speed", `${9 + Math.random() * 7}s`);
+    col.style.setProperty("--delay", `${-Math.random() * 8}s`);
+    col.textContent = buildBinaryStream(58);
+    root.appendChild(col);
+  }
+}
+
+function buildBinaryStream(lines = 52) {
+  let out = "";
+  for (let i = 0; i < lines; i++) {
+    out += Math.random() > 0.5 ? "1" : "0";
+    if (i < lines - 1) out += "\n";
+  }
+  return out;
 }
 
 function applyTheme(name) {
