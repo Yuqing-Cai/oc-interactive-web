@@ -64,6 +64,7 @@ const AXIS_GUIDE = {
 const axisContainer = document.getElementById("axisContainer");
 const selectedCountEl = document.getElementById("selectedCount");
 const clearBtn = document.getElementById("clearBtn");
+const modeBadgeEl = document.getElementById("modeBadge");
 const generateBtn = document.getElementById("generateBtn");
 const regenBtn = document.getElementById("regenBtn");
 const copyBtn = document.getElementById("copyBtn");
@@ -159,8 +160,17 @@ function getSelected() {
   return Array.from(axisContainer.querySelectorAll("input[type='checkbox']:checked")).map((item) => ({ axis: item.dataset.axis, option: item.value, code: item.dataset.code }));
 }
 
+function detectGenerateMode(selected = getSelected()) {
+  const axes = new Set(selected.map((s) => String(s.axis || "").trim().toUpperCase()));
+  return (axes.has("F") || axes.has("X") || axes.has("T") || axes.has("G")) ? "timeline" : "opening";
+}
+
 function updateSelectedCount() {
-  selectedCountEl.textContent = `已选 ${getSelected().length} 项`;
+  const selected = getSelected();
+  selectedCountEl.textContent = `已选 ${selected.length} 项`;
+  if (modeBadgeEl) {
+    modeBadgeEl.textContent = `模式：${detectGenerateMode(selected) === "timeline" ? "完整时间线" : "开场静态"}`;
+  }
 }
 
 function clearSelections() {
@@ -199,12 +209,13 @@ async function generate(isRegenerate) {
   const model = modelInput.value.trim() || "MiniMax-M2.5";
   const extraPrompt = extraPromptInput.value.trim();
   const selections = getSelected().map(({ axis, option }) => ({ axis, option }));
+  const mode = detectGenerateMode(selections);
 
   if (!apiUrl) return setStatus("请先填写 Worker API 地址。", true);
   if (selections.length < 3) return setStatus("至少选择 3 项轴要素。", true);
 
   setLoading(true);
-  setStatus(isRegenerate ? "正在重新生成…" : "正在生成…", false);
+  setStatus(isRegenerate ? `正在重新生成（${mode === "timeline" ? "完整时间线" : "开场静态"}）…` : `正在生成（${mode === "timeline" ? "完整时间线" : "开场静态"}）…`, false);
   try {
     const response = await fetch(apiUrl, {
       method: "POST",

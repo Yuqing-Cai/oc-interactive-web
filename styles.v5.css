@@ -60,7 +60,7 @@ body {
   overflow: hidden;
 }
 .section-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.row-actions { display: flex; gap: 8px; align-items: center; }
+.row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .top-gap { margin-top: 14px; }
 
 .chip {
