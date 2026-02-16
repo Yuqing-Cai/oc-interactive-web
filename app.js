@@ -268,10 +268,10 @@ async function generate(isRegenerate) {
   updateProgress();
   const timer = setInterval(updateProgress, 500);
 
-  let requestTimer = null;
   try {
     const requestCtrl = new AbortController();
-    requestTimer = setTimeout(() => requestCtrl.abort(), 98000);
+    // 不再在前端做硬超时中断，避免把长生成误判为失败。
+    // 若需手动中止，后续可增加“取消生成”按钮来触发 requestCtrl.abort()。
 
     const response = await fetch(streamUrl, {
       method: "POST",
@@ -346,7 +346,7 @@ async function generate(isRegenerate) {
     if (resultPanelEl) resultPanelEl.open = true;
   } catch (err) {
     const msg = err?.name === "AbortError"
-      ? "请求超时（约98秒）。请重试。"
+      ? "请求已中止。若非你主动取消，通常是浏览器/网络中间层断开了长连接，请重试。"
       : (err?.name === "TypeError"
         ? "网络层请求失败（可能是边缘连接被中断/跨域链路异常，并不一定是你本地断网）。请重试。"
         : (err?.message || "未知错误"));
@@ -355,7 +355,6 @@ async function generate(isRegenerate) {
     if (thinkingContentEl) thinkingContentEl.textContent = `- 请求失败\n- ${msg}`;
     if (thinkingPanelEl) thinkingPanelEl.open = true;
   } finally {
-    if (requestTimer) clearTimeout(requestTimer);
     clearInterval(timer);
     setLoading(false);
   }
