@@ -41,12 +41,10 @@ body {
 .shell { max-width: 1460px; margin: 0 auto; padding: 16px; position: relative; }
 .panel {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--soft-line);
   border-radius: 16px;
   backdrop-filter: blur(8px);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.12),
-    0 10px 30px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
 }
 .hero { padding: 18px; margin-bottom: 14px; }
 .kicker { color: var(--neon); letter-spacing: .1em; font-size: 12px; }
@@ -59,7 +57,7 @@ body {
 .top-gap { margin-top: 14px; }
 
 .chip {
-  border: 1px solid var(--line);
+  border: 0;
   background: var(--chip-bg);
   border-radius: 999px;
   padding: 4px 10px;
@@ -71,7 +69,7 @@ body {
 label { display: grid; gap: 6px; font-size: 13px; margin-top: 8px; }
 input, textarea, button, select {
   background: var(--input-bg);
-  border: 1px solid var(--line);
+  border: 1px solid var(--soft-line);
   color: var(--text);
   border-radius: 10px;
   padding: 10px;
@@ -86,49 +84,51 @@ button {
 }
 button.ghost {
   background: var(--chip-bg);
-  border: 1px solid var(--line);
+  border: 1px solid var(--soft-line);
 }
 
 .axis-container { display: grid; gap: 10px; margin-top: 8px; }
 .axis-group {
-  border: 1px solid var(--soft-line);
-  border-radius: 12px;
-  padding: 10px;
-  background: var(--card-bg);
+  border: 0;
+  border-left: 3px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 10px 10px 12px;
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent 12%);
 }
-.axis-group.active-axis { box-shadow: 0 0 0 1px var(--focus-ring) inset; }
+.axis-group.active-axis { box-shadow: inset 3px 0 0 var(--neon); }
 .axis-head { display: flex; justify-content: space-between; align-items: center; }
 .axis-desc { margin: 8px 0 2px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 6px; margin-top: 8px; }
 .option-item {
   display: grid;
   gap: 4px;
-  border: 1px solid var(--soft-line);
+  border: 0;
   border-radius: 8px;
   padding: 8px;
   font-size: 13px;
-  background: rgba(0, 0, 0, 0.08);
+  background: color-mix(in srgb, var(--input-bg) 78%, transparent 22%);
 }
+.option-item:hover { background: color-mix(in srgb, var(--input-bg) 64%, var(--chip-bg) 36%); }
 .option-desc { color: var(--muted); font-size: 12px; }
 .actions { display: flex; gap: 8px; margin-top: 10px; }
 
-.result-panel { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.result-panel { margin-top: 14px; padding-top: 8px; }
 .result { white-space: pre-wrap; line-height: 1.65; }
 
 .selected-explain {
-  border: 1px solid var(--soft-line);
+  border: 0;
   border-radius: 10px;
-  background: var(--card-bg);
-  padding: 10px;
+  background: transparent;
+  padding: 2px;
   max-height: 30vh;
   overflow: auto;
 }
 .explain-card {
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 10px;
   padding: 10px;
   margin-bottom: 8px;
-  background: var(--card-tint);
+  background: color-mix(in srgb, var(--card-bg) 82%, transparent 18%);
 }
 .explain-card h4 { margin: 0 0 6px; color: var(--text); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .explain-card p { margin: 0; color: var(--muted); line-height: 1.6; font-size: 13px; white-space: pre-wrap; }
