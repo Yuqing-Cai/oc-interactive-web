@@ -224,7 +224,17 @@ async function generate(isRegenerate) {
 
   setLoading(true);
   const startedAt = performance.now();
-  setStatus(isRegenerate ? `正在重新生成（${mode === "timeline" ? "完整时间线" : "开场静态"}）…` : `正在生成（${mode === "timeline" ? "完整时间线" : "开场静态"}）…`, false);
+  const modeLabel = mode === "timeline" ? "完整时间线" : "开场静态";
+  const actionLabel = isRegenerate ? "正在重新生成" : "正在生成";
+
+  const updateProgress = () => {
+    const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
+    setStatus(`${actionLabel}（${modeLabel}，已思考 ${seconds.toFixed(1)} 秒）…`, false);
+  };
+
+  updateProgress();
+  const timer = setInterval(updateProgress, 100);
+
   try {
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -239,6 +249,7 @@ async function generate(isRegenerate) {
   } catch (err) {
     setStatus(`错误：${err.message}`, true);
   } finally {
+    clearInterval(timer);
     setLoading(false);
   }
 }
