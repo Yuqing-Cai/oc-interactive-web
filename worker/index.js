@@ -111,6 +111,8 @@ async function runGeneration(body, env, hooks = {}) {
     throw e;
   }
 
+  const strictOutput = String(env.STRICT_OUTPUT || "false").toLowerCase() === "true";
+
   const trace = [];
   const startedAt = Date.now();
   const mark = (stage, extra = {}) => {
@@ -123,7 +125,7 @@ async function runGeneration(body, env, hooks = {}) {
   const mode = detectMode(selections);
   mark("mode_decided", { mode });
 
-  const systemPrompt = buildSystemPrompt(mode);
+  const systemPrompt = buildSystemPrompt(mode, strictOutput);
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
   const payload = {
@@ -149,7 +151,7 @@ async function runGeneration(body, env, hooks = {}) {
         },
         body: JSON.stringify(payload),
       },
-      70000
+      90000
     );
   } catch (err) {
     if (err?.name === "TimeoutError") {
@@ -199,52 +201,57 @@ async function runGeneration(body, env, hooks = {}) {
     throw e;
   }
 
-  const check = validateOutput(content, mode);
-  mark("output_validated", { ok: check.ok, missing: check.missing.length });
-
   let repaired = false;
-  if (!check.ok) {
-    const repairPrompt = buildRepairPrompt(content, check.missing, mode);
-    mark("repair_started");
-    const repairUpstream = await fetchWithTimeout(
-      apiUrl,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.6,
-          messages: [
-            {
-              role: "system",
-              content:
-                "你是文本修复器。仅输出最终成稿，不要解释修复过程，不要输出任何注释、前言、后记、思考过程。",
-            },
-            { role: "user", content: repairPrompt },
-          ],
-        }),
-      },
-      12000
-    );
+  if (strictOutput) {
+    const check = validateOutput(content, mode);
+    mark("output_validated", { ok: check.ok, missing: check.missing.length });
 
-    if (repairUpstream.ok) {
-      const repairData = await repairUpstream.json();
-      const repairedContent = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
-      if (repairedContent) {
-        content = repairedContent;
-        repaired = true;
-        mark("repair_applied");
+    if (!check.ok) {
+      const repairPrompt = buildRepairPrompt(content, check.missing, mode);
+      mark("repair_started");
+      const repairUpstream = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.6,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "你是文本修复器。仅输出最终成稿，不要解释修复过程，不要输出任何注释、前言、后记、思考过程。",
+              },
+              { role: "user", content: repairPrompt },
+            ],
+          }),
+        },
+        12000
+      );
+
+      if (repairUpstream.ok) {
+        const repairData = await repairUpstream.json();
+        const repairedContent = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
+        if (repairedContent) {
+          content = repairedContent;
+          repaired = true;
+          mark("repair_applied");
+        } else {
+          mark("repair_empty");
+        }
       } else {
-        mark("repair_empty");
+        mark("repair_failed", { status: repairUpstream.status });
       }
     } else {
-      mark("repair_failed", { status: repairUpstream.status });
+      mark("repair_skipped");
     }
   } else {
-    mark("repair_skipped");
+    mark("output_validated", { ok: true, skipped: true });
+    mark("repair_skipped", { skipped: true });
   }
 
   mark("completed", { repaired });
@@ -287,7 +294,7 @@ function detectMode(selections) {
   return axes.has("F") || axes.has("X") || axes.has("T") || axes.has("G") ? "timeline" : "opening";
 }
 
-function buildSystemPrompt(mode) {
+function buildSystemPrompt(mode, strictOutput = false) {
   const common = [
     "你是‘OC男主设定总设计师’。",
     "同一组选项可能对应许多自洽男主；你只需给出其中一种高完成度可能性，但必须写满写透，不能留大量待补空位。",
@@ -321,7 +328,9 @@ function buildSystemPrompt(mode) {
       "   - 至少给2套可直接复用的‘轴组合+补充提示词’建议，并说明各自会更接近什么效果。",
       "11) 开场片段（250~450字，MC第一视角）",
       "",
-      "最低信息密度要求：总字数建议 1600~2400 中文字。",
+      strictOutput
+        ? "最低信息密度要求：总字数建议 1600~2400 中文字。"
+        : "信息密度要求：优先保证可读与速度，总字数建议 900~1400 中文字。",
     ].join("\n");
   }
 
@@ -345,7 +354,9 @@ function buildSystemPrompt(mode) {
     "   - 至少给2套可直接复用的‘轴组合+补充提示词’建议，并说明各自会更接近什么效果。",
     "10) 开场片段（300~500字，MC第一视角）",
     "",
-    "最低信息密度要求：总字数建议 1400~2200 中文字。",
+    strictOutput
+      ? "最低信息密度要求：总字数建议 1400~2200 中文字。"
+      : "信息密度要求：优先保证可读与速度，总字数建议 800~1200 中文字。", 
   ].join("\n");
 }
 
