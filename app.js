@@ -229,7 +229,7 @@ function setLoading(loading) {
 
 function setStatus(text, isError) {
   statusEl.textContent = text;
-  statusEl.style.color = isError ? "#ff7b7b" : "#8fa4cf";
+  statusEl.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
 }
 
 async function copyResult() {
