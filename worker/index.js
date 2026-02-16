@@ -88,10 +88,40 @@ export default {
 
       const data = await upstream.json();
       const rawContent = data?.choices?.[0]?.message?.content;
-      const content = sanitizeModelOutput(rawContent);
+      let content = sanitizeModelOutput(rawContent);
 
       if (!content) {
         return json({ error: "No content in model response.", raw: data }, 502);
+      }
+
+      const check = validateOutput(content);
+      if (!check.ok) {
+        const repairPrompt = buildRepairPrompt(content, check.missing);
+        const repairUpstream = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.6,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "你是文本修复器。仅输出最终成稿，不要解释修复过程，不要输出任何注释、前言、后记、思考过程。",
+              },
+              { role: "user", content: repairPrompt },
+            ],
+          }),
+        });
+
+        if (repairUpstream.ok) {
+          const repairData = await repairUpstream.json();
+          const repaired = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
+          if (repaired) content = repaired;
+        }
       }
 
       return json({ content }, 200);
@@ -109,6 +139,40 @@ function sanitizeModelOutput(text) {
     .replace(/```(?:thinking|analysis)?[\s\S]*?```/gi, "")
     .replace(/^\s*(思考过程|推理过程|Reasoning)[:：].*$/gim, "")
     .trim();
+}
+
+function validateOutput(content) {
+  const requiredTitles = [
+    "1) 设定总览（玩家上帝视角）",
+    "2) 男主完整档案（玩家上帝视角）",
+    "3) 世界观与时代切片（玩家上帝视角）",
+    "4) MC视角情报（她知道 / 不知道）",
+    "5) 关系初始动力学（此刻已成立）",
+    "6) 选轴映射说明",
+    "7) 开场时刻场景锚点",
+    "8) 开场片段（300~500字，MC第一视角）",
+  ];
+
+  const missing = requiredTitles.filter((t) => !content.includes(t));
+  const tooShort = content.length < 1200;
+  if (tooShort) missing.push("【总字数不足，请补足信息密度】");
+
+  return { ok: missing.length === 0, missing };
+}
+
+function buildRepairPrompt(draft, missing) {
+  return [
+    "下面是一份初稿，请你修复为最终版。",
+    "要求：",
+    "- 保留已有可用内容，但补齐缺失结构与信息密度。",
+    "- 输出中禁止出现‘修复说明/补充说明/下面是/我已’等元话术。",
+    "- 只输出最终故事设定正文。",
+    "",
+    `缺失项：\n${missing.map((m) => `- ${m}`).join("\n")}`,
+    "",
+    "初稿：",
+    draft,
+  ].join("\n");
 }
 
 function corsHeaders() {
