@@ -98,7 +98,12 @@ clearBtn.addEventListener("click", clearSelections);
 generateBtn.addEventListener("click", () => generate(false));
 regenBtn.addEventListener("click", () => generate(true));
 copyBtn.addEventListener("click", copyResult);
-mobileInsightToggle.addEventListener("click", () => insightPanel.classList.toggle("open"));
+mobileInsightToggle.addEventListener("click", () => {
+  insightPanel.classList.toggle("open");
+  syncMobileToggle();
+});
+window.addEventListener("resize", syncMobileToggle);
+syncMobileToggle();
 if (themeSelect) {
   themeSelect.addEventListener("change", () => {
     const v = themeSelect.value;
@@ -345,6 +350,17 @@ function cleanMarkdown(str) {
 function applyTheme(name) {
   document.body.classList.remove("theme-green", "theme-yellow", "theme-pink", "theme-red", "theme-purple", "theme-orange");
   if (name && name !== "cyan") document.body.classList.add(`theme-${name}`);
+}
+
+function syncMobileToggle() {
+  if (!mobileInsightToggle || !insightPanel) return;
+  const isMobile = window.matchMedia("(max-width: 1100px)").matches;
+  if (!isMobile) {
+    insightPanel.classList.remove("open");
+    mobileInsightToggle.textContent = "查看解释面板";
+    return;
+  }
+  mobileInsightToggle.textContent = insightPanel.classList.contains("open") ? "收起解释面板" : "查看解释面板";
 }
 
 function escapeHtml(str = "") {

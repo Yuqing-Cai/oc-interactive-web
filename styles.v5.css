@@ -176,7 +176,16 @@ button.ghost {
     transition: transform .25s ease;
   }
   .right.open { transform: translateY(0); }
-  .mobile-toggle { display: block; position: fixed; right: 12px; bottom: 12px; z-index: 30; }
+  .mobile-toggle {
+    display: block;
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 30;
+    min-height: 44px;
+    padding: 10px 14px;
+    border-radius: 12px;
+  }
   .selected-explain-live { min-height: 20vh; }
   .selected-explain-static { min-height: 14vh; max-height: 22vh; }
 }
@@ -226,6 +235,13 @@ body.theme-orange {
 }
 
 @media (max-width: 720px) {
+  .shell { padding: 10px; }
+  .hero, .left, .right { padding: 12px; }
+  .section-head h2 { font-size: 22px; }
   .config-grid { grid-template-columns: 1fr; }
   .options { grid-template-columns: 1fr; }
+  .option-item { padding: 12px; min-height: 52px; }
+  input[type='checkbox'] { transform: scale(1.15); }
+  .actions { flex-direction: column; }
+  .actions button { width: 100%; min-height: 44px; }
 }
