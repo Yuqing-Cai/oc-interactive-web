@@ -356,13 +356,25 @@ function buildRainColumns(root, count = 6) {
   if (!root) return;
   root.innerHTML = "";
   for (let i = 0; i < count; i++) {
-    const col = document.createElement("span");
-    col.className = "rain-col";
-    col.style.setProperty("--x", `${10 + i * 12}%`);
-    col.style.setProperty("--speed", `${9 + Math.random() * 7}s`);
-    col.style.setProperty("--delay", `${-Math.random() * 8}s`);
-    col.textContent = buildBinaryStream(58);
-    root.appendChild(col);
+    const x = 10 + i * 12;
+    const speed = 10 + Math.random() * 6;
+
+    const colA = document.createElement("span");
+    colA.className = "rain-col";
+    colA.style.setProperty("--x", `${x}%`);
+    colA.style.setProperty("--speed", `${speed}s`);
+    colA.style.setProperty("--delay", `${-Math.random() * speed}s`);
+    colA.textContent = buildBinaryStream(58);
+
+    const colB = document.createElement("span");
+    colB.className = "rain-col";
+    colB.style.setProperty("--x", `${x}%`);
+    colB.style.setProperty("--speed", `${speed}s`);
+    colB.style.setProperty("--delay", `${-(speed / 2 + Math.random() * (speed / 2))}s`);
+    colB.textContent = buildBinaryStream(58);
+
+    root.appendChild(colA);
+    root.appendChild(colB);
   }
 }
 
