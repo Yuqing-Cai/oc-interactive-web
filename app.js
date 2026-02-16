@@ -123,6 +123,11 @@ updateSelectedCount();
 loadDocForExplanations();
 initBinaryRain();
 
+if (extraPromptInput) extraPromptInput.value = "";
+window.addEventListener("pageshow", () => {
+  if (extraPromptInput) extraPromptInput.value = "";
+});
+
 clearBtn.addEventListener("click", clearSelections);
 if (clearBtnBottom) clearBtnBottom.addEventListener("click", clearSelections);
 generateBtn.addEventListener("click", () => generate(false));
