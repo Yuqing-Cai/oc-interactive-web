@@ -314,6 +314,8 @@ async function generate(isRegenerate) {
         if (evt?.type === "stage") {
           liveTrace.push({ stage: evt.stage, t: evt.t || 0 });
           if (thinkingContentEl) thinkingContentEl.innerHTML = formatTrace(liveTrace, false, mode, evt.t || 0);
+        } else if (evt?.type === "ping") {
+          // 心跳包：用于保持流连接活性，前端无需额外渲染。
         } else if (evt?.type === "done") {
           finalContent = evt.content || "";
           finalMeta = evt.meta || null;

@@ -48,6 +48,7 @@ async function handleGenerateStream(request, env, ctx) {
 
   const streamTask = (async () => {
     let body;
+    let heartbeat = null;
     try {
       body = await request.json();
     } catch {
@@ -55,6 +56,11 @@ async function handleGenerateStream(request, env, ctx) {
       await close();
       return;
     }
+
+    // 某些链路（代理/CDN）会在长时间无数据时主动断开流连接；发送心跳包保持连接活性。
+    heartbeat = setInterval(() => {
+      send({ type: "ping", t: Date.now() }).catch(() => {});
+    }, 5000);
 
     try {
       const result = await runGeneration(body, env, {
@@ -70,6 +76,7 @@ async function handleGenerateStream(request, env, ctx) {
       const mapped = mapError(err);
       await send({ type: "error", error: mapped.message, code: mapped.code || "GEN_ERROR" });
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
       await close();
     }
   })();
