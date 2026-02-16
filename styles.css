@@ -156,6 +156,26 @@ button.ghost {
 }
 .option-item:hover { background: color-mix(in srgb, var(--input-bg) 64%, var(--chip-bg) 36%); }
 .option-desc { color: var(--muted); font-size: 12px; }
+
+.prompt-guide {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--input-bg) 82%, transparent 18%);
+}
+.prompt-guide summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+}
+.prompt-guide ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.prompt-guide li { color: var(--muted); line-height: 1.5; }
+
 .actions { display: flex; gap: 8px; margin-top: 10px; }
 
 .result-panel { margin-top: 14px; padding-top: 8px; }

@@ -48,9 +48,24 @@
           <div id="axisContainer" class="axis-container"></div>
 
           <h2 class="top-gap">补充偏好（可选）</h2>
+          <details class="prompt-guide">
+            <summary>不知道写什么？展开查看可用提示词类别</summary>
+            <p class="muted">你不需要全写，挑最在意的 3~6 条即可。越具体，生成越贴脸。</p>
+            <ul>
+              <li><strong>男主基础信息：</strong>年龄段、身高体型、五官特征、穿衣风格、标志物（耳钉/纹身/眼镜等）。</li>
+              <li><strong>外貌细节：</strong>伤疤/旧伤、手部特征、气味、声音质地、是否有非人特征。</li>
+              <li><strong>情感与亲密史：</strong>是否有前任、是否有刻骨旧爱、情感经验（白纸/熟手）、性经验（处男/非处男/不适用）。</li>
+              <li><strong>关系边界：</strong>可接受/不可接受的亲密行为，嫉妒阈值，占有欲强度，沟通偏好（直说/迂回）。</li>
+              <li><strong>权力与互动手感：</strong>谁更主动、谁更掌控、拉扯强度、冲突风格（冷战/爆发/理性谈判）。</li>
+              <li><strong>世界与现实约束：</strong>时代背景、阶层差、法律/家族压力、地理环境（城市/边境/废土）。</li>
+              <li><strong>叙事语气：</strong>甜/虐比例、节奏快慢、文风（克制/浓烈/冷峻）、是否允许黑暗元素。</li>
+              <li><strong>内容边界（强烈建议写）：</strong>明确雷区与禁写项（如：不要PUA美化、不要怀孕线、不要暴力描写等）。</li>
+              <li><strong>开场镜头偏好：</strong>时间（清晨/雨夜）、天气、地点（医院/酒吧/战场）、第一句台词风格。</li>
+            </ul>
+          </details>
           <label>
             风格/限制
-            <textarea id="extraPrompt" rows="3" placeholder="例如：男主更强势；开场要有压迫感；避免过长抒情。"></textarea>
+            <textarea id="extraPrompt" rows="5" placeholder="例：男主27岁，非处男但长期情感封闭；右手虎口有旧伤；声音偏低哑。关系上他外冷内热、占有欲中高，但明确尊重边界。世界是近未来海港城，雨夜开场，避免PUA美化与过度暴力。"></textarea>
           </label>
 
           <div class="actions">
