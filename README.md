@@ -28,12 +28,12 @@
 
 ## 项目结构（给维护者）
 
-- `index.html` / `styles.v5.css` / `app.v5.js`：前端页面
+- `index.html` / `styles.css` / `app.js`：前端页面
 - `worker/index.js`：后端代理与生成逻辑（含静默校验/修复）
 - `OC.md`：原始轴文档
 
 固定配置位置：
-- 前端固定 API / 模型在 `app.v5.js`：`FIXED_API_URL`、`FIXED_MODEL`
+- 前端固定 API / 模型在 `app.js`：`FIXED_API_URL`、`FIXED_MODEL`
 
 ---
 
