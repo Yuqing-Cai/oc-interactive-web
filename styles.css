@@ -181,10 +181,10 @@ button.ghost {
 .result-panel { margin-top: 14px; padding-top: 8px; }
 .result-wrap,
 .thinking-panel {
-  margin-top: 8px;
+  margin-top: 6px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--input-bg) 70%, transparent 30%);
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 .result-wrap summary,
 .thinking-panel summary {
@@ -192,34 +192,34 @@ button.ghost {
   color: var(--text);
   font-weight: 600;
 }
-.result { white-space: pre-wrap; line-height: 1.65; margin-top: 8px; }
+.result { white-space: pre-wrap; line-height: 1.6; margin-top: 6px; }
 
 .trace-log {
   display: grid;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 3px;
+  margin-top: 4px;
 }
 .trace-item {
   display: grid;
-  grid-template-columns: 58px 1fr;
-  gap: 8px;
+  grid-template-columns: 52px 1fr;
+  gap: 6px;
   align-items: start;
   color: var(--muted);
 }
 .trace-time {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: color-mix(in srgb, var(--neon) 55%, var(--text) 45%);
-  font-size: 12px;
+  font-size: 11px;
 }
-.trace-text { line-height: 1.45; }
+.trace-text { line-height: 1.3; font-size: 12px; }
 .trace-meta {
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px dashed color-mix(in srgb, var(--line) 60%, transparent 40%);
   color: var(--muted);
   display: grid;
-  gap: 4px;
-  font-size: 13px;
+  gap: 2px;
+  font-size: 12px;
 }
 
 .selected-explain {

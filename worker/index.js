@@ -151,7 +151,7 @@ async function runGeneration(body, env, hooks = {}) {
         },
         body: JSON.stringify(payload),
       },
-      90000
+      0
     );
   } catch (err) {
     if (err?.name === "TimeoutError") {
@@ -438,6 +438,11 @@ function buildRepairPrompt(draft, missing, mode) {
 }
 
 async function fetchWithTimeout(url, init, timeoutMs = 85000) {
+  // timeoutMs <= 0 视为不主动超时，让上游/平台自身超时策略接管。
+  if (!(Number(timeoutMs) > 0)) {
+    return await fetch(url, init);
+  }
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {

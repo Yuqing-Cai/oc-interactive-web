@@ -407,15 +407,15 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
         const cur = Number(item.t || 0);
         const cost = Math.max(0, (cur - prev) / 1000).toFixed(2);
         const label = escapeHtml(labelMap[item.stage] || item.stage || "未知阶段");
-        return `<tr><td>${label}</td><td style="text-align:right;">${cost}s</td></tr>`;
+        return `<tr><td style="padding:1px 0;">${label}</td><td style="text-align:right;padding:1px 0;">${cost}s</td></tr>`;
       }).join("")
     : "";
 
   const timingTable = timingRows
-    ? `<div style="margin:10px 0 8px 0;">
-        <div style="font-size:12px;opacity:.85;margin-bottom:6px;">阶段耗时拆解</div>
-        <table style="width:100%;font-size:12px;border-collapse:collapse;">
-          <thead><tr><th style="text-align:left;opacity:.7;">阶段</th><th style="text-align:right;opacity:.7;">耗时</th></tr></thead>
+    ? `<div style="margin:6px 0 4px 0;">
+        <div style="font-size:12px;opacity:.85;margin-bottom:3px;">阶段耗时拆解</div>
+        <table style="width:100%;font-size:12px;line-height:1.2;border-collapse:collapse;">
+          <thead><tr><th style="text-align:left;opacity:.7;padding:0 0 2px 0;">阶段</th><th style="text-align:right;opacity:.7;padding:0 0 2px 0;">耗时</th></tr></thead>
           <tbody>${timingRows}</tbody>
         </table>
       </div>`
