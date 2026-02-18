@@ -432,12 +432,25 @@ function parsePlanOutput(raw, mode) {
     return { ok: false, reason: "JSON 解析失败" };
   }
   if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
+
+  // 兼容非标准字段名
+  const profile = obj.male_profile || obj.character_profile || obj.hero_profile || obj.profile || {};
+  obj.male_profile = {
+    mbti: profile.mbti || profile.MBTI || obj.mbti,
+    enneagram: profile.enneagram || profile["九型人格"] || obj.enneagram,
+    instinctual_variant: profile.instinctual_variant || profile.instinct || profile["副型"] || obj.instinctual_variant,
+    background_outline: profile.background_outline || profile.background || obj.background_outline || obj.core_premise,
+  };
+
   if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
   if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
   if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
   const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant);
   if (!iv) return { ok: false, reason: "副型非法" };
   obj.male_profile.instinctual_variant = iv;
+  if (!obj.core_premise) obj.core_premise = String(obj.male_profile.background_outline || "").slice(0, 220);
+  if (!Array.isArray(obj.axis_mapping)) obj.axis_mapping = Array.isArray(obj.mapping) ? obj.mapping : [];
+  if (!obj.mc_boundary) obj.mc_boundary = "MC不命名，统一使用‘她/我’视角。";
   if (mode === "timeline" && !String(obj.timeline_outline || "").trim()) return { ok: false, reason: "缺少时间线骨架" };
   return { ok: true, value: obj };
 }
@@ -587,6 +600,16 @@ function parseStructuredOutput(raw, mode) {
   }
 
   if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
+
+  const profile = obj.male_profile || obj.character_profile || obj.hero_profile || obj.profile || {};
+  obj.male_profile = {
+    ...(typeof profile === "object" ? profile : {}),
+    mbti: profile.mbti || profile.MBTI || obj.mbti,
+    enneagram: profile.enneagram || profile["九型人格"] || obj.enneagram,
+    instinctual_variant: profile.instinctual_variant || profile.instinct || profile["副型"] || obj.instinctual_variant,
+    profile_body: profile.profile_body || profile.background || obj.profile_body,
+  };
+
   if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
 
   const mbti = String(obj.male_profile.mbti || "").trim().toUpperCase();
