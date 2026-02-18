@@ -222,35 +222,29 @@ async function runGeneration(body, env, hooks = {}) {
   let structured = parseStructuredOutput(rawContent, mode);
   if (!structured.ok) {
     mark("structured_parse_failed", { reason: structured.reason });
-    const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
-    if (coerced) {
-      structured = { ok: true, value: coerced };
+
+    // 优先从骨架重建，避免在坏原文上反复修补导致长耗时。
+    const rebuilt = await rebuildFromPlan(apiUrl, apiKey, finalModel, mode, planParsed.value, selections, extraPrompt);
+    if (rebuilt) {
+      structured = { ok: true, value: rebuilt };
       repaired = true;
-      mark("structured_parse_recovered");
-    } else {
-      const retryRes = await requestWithTransientRetries(apiUrl, apiKey, { ...payload, temperature: 0.4, max_tokens: mode === "timeline" ? 3000 : 2300 }, { timeoutMs: 90000, retries: 0 });
-      if (retryRes.ok) {
-        const retryData = await retryRes.json();
-        const retried = parseStructuredOutput(retryData?.choices?.[0]?.message?.content, mode);
-        if (retried.ok) {
-          structured = retried;
-          repaired = true;
-          mark("structured_parse_recovered");
-        }
+      mark("structured_rebuilt_from_plan");
+    }
+
+    // 若骨架重建也失败，再做一次短时JSON修复兜底。
+    if (!structured.ok) {
+      const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
+      if (coerced) {
+        structured = { ok: true, value: coerced };
+        repaired = true;
+        mark("structured_parse_recovered");
       }
-      if (!structured.ok) {
-        const rebuilt = await rebuildFromPlan(apiUrl, apiKey, finalModel, mode, planParsed.value, selections, extraPrompt);
-        if (rebuilt) {
-          structured = { ok: true, value: rebuilt };
-          repaired = true;
-          mark("structured_rebuilt_from_plan");
-        }
-      }
-      if (!structured.ok) {
-        const e = new Error(`结构化输出校验失败：${structured.reason}`);
-        e.status = 502;
-        throw e;
-      }
+    }
+
+    if (!structured.ok) {
+      const e = new Error(`结构化输出校验失败：${structured.reason}`);
+      e.status = 502;
+      throw e;
     }
   }
 
@@ -807,7 +801,7 @@ async function coerceToPlanJson(apiUrl, apiKey, model, rawContent, mode) {
         ],
       }),
     },
-    45000
+    25000
   );
 
   if (!res.ok) return null;
@@ -832,7 +826,7 @@ async function rebuildFromPlan(apiUrl, apiKey, model, mode, plan, selections, ex
     ],
   };
 
-  const res = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: 90000, retries: 0 });
+  const res = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: 70000, retries: 0 });
   if (!res.ok) return null;
   const data = await res.json();
   const parsed = parseStructuredOutput(data?.choices?.[0]?.message?.content, mode);
