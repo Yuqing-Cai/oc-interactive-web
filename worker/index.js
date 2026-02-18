@@ -487,18 +487,52 @@ function buildOutputSchema(mode) {
 }
 
 function parseStructuredOutput(raw, mode) {
+  const normalized = normalizeJsonLikeContent(raw);
+  let obj = null;
+
   try {
-    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
-    if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
-    if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
-    if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
-    if (!/^(sp|sx|so)\/(sp|sx|so)$/i.test(String(obj.male_profile.instinctual_variant || ""))) return { ok: false, reason: "副型非法" };
-    if (mode === "timeline" && !String(obj.timeline || "").trim()) return { ok: false, reason: "缺少三幕时间线" };
-    return { ok: true, value: obj };
+    obj = typeof normalized === "string" ? JSON.parse(normalized) : normalized;
   } catch {
     return { ok: false, reason: "JSON 解析失败" };
   }
+
+  if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
+  if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
+  if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
+  if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
+  if (!/^(sp|sx|so)\/(sp|sx|so)$/i.test(String(obj.male_profile.instinctual_variant || ""))) return { ok: false, reason: "副型非法" };
+  if (mode === "timeline" && !String(obj.timeline || "").trim()) return { ok: false, reason: "缺少三幕时间线" };
+  return { ok: true, value: obj };
+}
+
+function normalizeJsonLikeContent(raw) {
+  if (raw == null) return "";
+
+  // 兼容部分模型返回 content 数组块（text segments）
+  if (Array.isArray(raw)) {
+    const joined = raw
+      .map((x) => (typeof x === "string" ? x : (x?.text || x?.content || "")))
+      .join("");
+    return normalizeJsonLikeContent(joined);
+  }
+
+  if (typeof raw !== "string") return raw;
+
+  let text = raw.trim();
+  if (!text) return text;
+
+  // 去掉 markdown 代码块包裹
+  const fence = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fence) text = fence[1].trim();
+
+  // 若前后有解释文本，截取首个 JSON 对象
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    text = text.slice(start, end + 1);
+  }
+
+  return text;
 }
 
 async function runAlignmentCheck(apiUrl, apiKey, model, structured, selections, extraPrompt, mode) {
