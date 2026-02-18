@@ -131,8 +131,16 @@ async function runGeneration(body, env, hooks = {}) {
 
   const payload = {
     model,
-    temperature: 0.85,
+    temperature: 0.65,
     max_tokens: mode === "timeline" ? 4200 : 3200,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "oc_profile",
+        strict: true,
+        schema: buildOutputSchema(mode),
+      },
+    },
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -195,144 +203,23 @@ async function runGeneration(body, env, hooks = {}) {
   mark("upstream_response_received");
   const data = await upstream.json();
   const rawContent = data?.choices?.[0]?.message?.content;
-  const finishReason = data?.choices?.[0]?.finish_reason;
-  let content = sanitizeModelOutput(rawContent);
+  let content = "";
+  let repaired = false;
 
-  if (!content) {
+  if (!rawContent) {
     const e = new Error("No content in model response.");
     e.status = 502;
     throw e;
   }
 
-  // 若因 token 上限被截断，自动续写一次，尽量返回完整文稿。
-  if (finishReason === "length") {
-    mark("continuation_started");
-    const continuation = await continueLongOutput(apiUrl, apiKey, model, systemPrompt, userPrompt, content);
-    if (continuation) {
-      content = `${content}\n${continuation}`.trim();
-      mark("continuation_applied");
-    } else {
-      mark("continuation_empty");
-    }
+  const structured = parseStructuredOutput(rawContent, mode);
+  if (!structured.ok) {
+    const e = new Error(`结构化输出校验失败：${structured.reason}`);
+    e.status = 502;
+    throw e;
   }
 
-  let repaired = false;
-
-  // 统一做一次“语义一致性回读修订”：不靠枚举正则，而是让模型按选轴+补充提示进行整体一致性修订。
-  const consistencyPrompt = buildConsistencyPassPrompt(content, selections, extraPrompt, mode, synthesizedConstraints);
-  // 一致性修订是“优化项”，不能因为它超时导致整单失败。
-  try {
-    const consistencyUpstream = await fetchWithTimeout(
-      apiUrl,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.2,
-          max_tokens: mode === "timeline" ? 2200 : 1500,
-          messages: [
-            {
-              role: "system",
-              content: "你是文本一致性修订器。仅输出修订后的最终正文，不解释。",
-            },
-            { role: "user", content: consistencyPrompt },
-          ],
-        }),
-      },
-      20000
-    );
-
-    if (consistencyUpstream.ok) {
-      const consistencyData = await consistencyUpstream.json();
-      const revised = sanitizeModelOutput(consistencyData?.choices?.[0]?.message?.content);
-      if (revised) {
-        content = revised;
-        repaired = true;
-        mark("consistency_pass_applied");
-      } else {
-        mark("consistency_pass_empty");
-      }
-    } else {
-      mark("consistency_pass_failed", { status: consistencyUpstream.status });
-    }
-  } catch (err) {
-    if (err?.name === "TimeoutError") {
-      mark("consistency_pass_timeout_skipped");
-    } else {
-      mark("consistency_pass_error_skipped", { message: err?.message || "unknown" });
-    }
-  }
-
-  // 无论 strictOutput 是否开启，都强制检查MBTI+九型是否出现；缺失则进行定向补写。
-  if (!hasPersonalityFields(content)) {
-    mark("personality_fields_missing");
-    const patchPrompt = [
-      "请仅修补‘男主完整档案’段落，确保明确出现MBTI与九型人格（可含翼型）。",
-      "要求：",
-      "- 在男主完整档案中显式出现两行字段：‘MBTI：...’与‘九型人格：...’。",
-      "- 保持其余段落与结构不变。",
-      "- 不要新增解释，不要删减已有关键设定。",
-      "- 仅输出修补后的完整正文。",
-      "当前正文：",
-      content,
-    ].join("\n");
-
-    try {
-      const patchUpstream = await fetchWithTimeout(
-        apiUrl,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            temperature: 0.2,
-            max_tokens: mode === "timeline" ? 3200 : 2400,
-            messages: [
-              { role: "system", content: "你是文本定向修补器。仅输出修补后正文。" },
-              { role: "user", content: patchPrompt },
-            ],
-          }),
-        },
-        30000
-      );
-      if (patchUpstream.ok) {
-        const patchData = await patchUpstream.json();
-        const patched = sanitizeModelOutput(patchData?.choices?.[0]?.message?.content);
-        if (patched && hasPersonalityFields(patched)) {
-          content = patched;
-          repaired = true;
-          mark("personality_fields_patched");
-        } else {
-          mark("personality_fields_patch_failed");
-        }
-      } else {
-        mark("personality_fields_patch_failed", { status: patchUpstream.status });
-      }
-    } catch {
-      mark("personality_fields_patch_failed");
-    }
-
-    // 本地兜底：若模型补写仍失败，则在“男主完整档案”段落强制补齐字段，避免整单报错。
-    if (!hasPersonalityFields(content)) {
-      const forced = forceAddPersonalityFields(content);
-      if (forced && hasPersonalityFields(forced)) {
-        content = forced;
-        repaired = true;
-        mark("personality_fields_forced_local");
-      } else {
-        const e = new Error("生成结果缺少MBTI或九型人格（硬约束未满足）。请重试。");
-        e.status = 502;
-        throw e;
-      }
-    }
-  }
+  content = renderStructuredMarkdown(structured.value, mode);
 
   if (strictOutput) {
     const check = validateOutput(content, mode);
@@ -428,6 +315,7 @@ function detectMode(selections) {
 function buildSystemPrompt(mode, strictOutput = false) {
   const common = [
     "你是‘OC男主设定总设计师’。",
+    "你必须返回符合 JSON Schema 的对象，不得输出 markdown、解释或额外文本。",
     "同一组选项可能对应许多自洽男主；此处只输出一种高完成度实现。",
     "输出必须并列呈现：玩家上帝视角可见信息 + MC当下视角可见信息。",
     "严禁输出思考过程、推理链、注释，严禁输出<think>、[思考]、Reasoning。",
@@ -522,7 +410,7 @@ function buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints =
     "不要把轴选项名称直接抄成世界观实体名；除非用户明确要求，否则按语义隐喻处理。",
     "‘矛盾度与取舍说明’和‘下次重生成建议’仅在确有必要时展开；若本次组合本身自洽，可用简短占位语句。",
     "请在最终输出前做一次整体自检：确保与提炼硬约束一致，不一致则先改写后输出。",
-    "男主完整档案中必须显式出现两行：‘MBTI：...’与‘九型人格：...’。",
+    "男主完整档案内的人格字段必须完整：MBTI、九型人格、副型（sp/sx/so之一主副组合）。",
     "提醒：输出中可说明‘这是所有可能性中的一种实现’，但正文必须完整具体。"
   ].join("\n");
 }
@@ -573,57 +461,140 @@ function safeParseConstraintsJson(raw) {
 
 function hasPersonalityFields(content = "") {
   const text = String(content || "");
-  const hasMbti = /(MBTI|迈尔斯|十六型|16型|\b[EI][NS][FT][JP]\b)/i.test(text);
-  const hasEnnea = /(九型|Enneagram|\b[1-9]w[1-9]\b|\b[1-9]号\b|\b[1-9]型\b)/i.test(text);
-  return hasMbti && hasEnnea;
+  const hasMbti = /MBTI\s*[：:]\s*[EI][NS][FT][JP]/i.test(text);
+  const hasEnnea = /九型人格\s*[：:]\s*[^\n]+/i.test(text);
+  const hasInstinct = /副型\s*[：:]\s*(?:sp|sx|so)\/(?:sp|sx|so)/i.test(text);
+  return hasMbti && hasEnnea && hasInstinct;
 }
 
-function extractMbti(content = "") {
-  const text = String(content || "");
-  const direct = text.match(/MBTI\s*[：:]\s*([A-Za-z]{4})/i)?.[1];
-  if (direct) return direct.toUpperCase();
-  const code = text.match(/\b([EI][NS][FT][JP])\b/i)?.[1];
-  return code ? code.toUpperCase() : "INTJ";
+function buildOutputSchema(mode) {
+  const timelineProps = mode === "timeline"
+    ? {
+        timeline: { type: "string", minLength: 200 },
+        ending_payoff: { type: "string", minLength: 120 },
+      }
+    : {};
+
+  const timelineReq = mode === "timeline" ? ["timeline", "ending_payoff"] : [];
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      overview: { type: "string", minLength: 120 },
+      male_profile: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          mbti: { type: "string", pattern: "^[EI][NS][FT][JP]$" },
+          enneagram: { type: "string", minLength: 2 },
+          instinctual_variant: { type: "string", pattern: "^(sp|sx|so)\\/(sp|sx|so)$" },
+          profile_body: { type: "string", minLength: mode === "timeline" ? 700 : 550 },
+        },
+        required: ["mbti", "enneagram", "instinctual_variant", "profile_body"],
+      },
+      world_slice: { type: "string", minLength: 120 },
+      mc_intel: { type: "string", minLength: 100 },
+      relationship_dynamics: { type: "string", minLength: 100 },
+      axis_mapping: {
+        type: "array",
+        minItems: 4,
+        maxItems: 8,
+        items: { type: "string", minLength: 8 },
+      },
+      tradeoff_notes: { type: "string", minLength: 20 },
+      regen_suggestion: { type: "string", minLength: 10 },
+      opening_scene: { type: "string", minLength: mode === "timeline" ? 250 : 300 },
+      ...timelineProps,
+    },
+    required: [
+      "overview",
+      "male_profile",
+      "world_slice",
+      "mc_intel",
+      "relationship_dynamics",
+      "axis_mapping",
+      "tradeoff_notes",
+      "regen_suggestion",
+      "opening_scene",
+      ...timelineReq,
+    ],
+  };
 }
 
-function extractEnneagram(content = "") {
-  const text = String(content || "");
-  const direct = text.match(/(?:九型人格|九型|Enneagram)\s*[：:]\s*([^\n。；;]+)/i)?.[1]?.trim();
-  if (direct) return direct;
-  const wing = text.match(/\b([1-9]w[1-9])\b/i)?.[1];
-  if (wing) return wing.toLowerCase();
-  const typeNum = text.match(/\b([1-9])\s*(?:号|型)\b/)?.[1];
-  if (typeNum) return `${typeNum}号`;
-  return "5w4";
-}
-
-function forceAddPersonalityFields(content = "") {
-  const text = String(content || "").trim();
-  if (!text) return text;
-
-  let out = text;
-  const mbtiLine = /(?:^|\n)\s*MBTI\s*[：:]/i;
-  const enneaLine = /(?:^|\n)\s*九型人格\s*[：:]/i;
-  const missingMbti = !mbtiLine.test(out);
-  const missingEnnea = !enneaLine.test(out);
-  if (!missingMbti && !missingEnnea) return out;
-
-  const mbti = extractMbti(out);
-  const ennea = extractEnneagram(out);
-  const lines = [];
-  if (missingMbti) lines.push(`MBTI：${mbti}`);
-  if (missingEnnea) lines.push(`九型人格：${ennea}`);
-  const injection = lines.join("\n");
-
-  const profileHeadRe = /(\n|^)(2\)\s*男主完整档案[^\n]*\n?)/;
-  const m = out.match(profileHeadRe);
-  if (m) {
-    const idx = m.index + m[0].length;
-    out = `${out.slice(0, idx)}${injection}\n${out.slice(idx)}`;
-  } else {
-    out = `${injection}\n${out}`;
+function parseStructuredOutput(raw, mode) {
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
+    if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
+    if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
+    if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
+    if (!/^(sp|sx|so)\/(sp|sx|so)$/i.test(String(obj.male_profile.instinctual_variant || ""))) return { ok: false, reason: "副型非法" };
+    if (mode === "timeline" && !String(obj.timeline || "").trim()) return { ok: false, reason: "缺少三幕时间线" };
+    return { ok: true, value: obj };
+  } catch {
+    return { ok: false, reason: "JSON 解析失败" };
   }
-  return out;
+}
+
+function renderStructuredMarkdown(obj, mode) {
+  const lines = [
+    "1) 设定总览（玩家上帝视角）",
+    String(obj.overview || "").trim(),
+    "",
+    "2) 男主完整档案（玩家上帝视角）",
+    `MBTI：${String(obj.male_profile?.mbti || "").toUpperCase()}`,
+    `九型人格：${String(obj.male_profile?.enneagram || "").trim()}`,
+    `副型：${String(obj.male_profile?.instinctual_variant || "").toLowerCase()}`,
+    String(obj.male_profile?.profile_body || "").trim(),
+    "",
+    "3) 世界观与时代切片（玩家上帝视角）",
+    String(obj.world_slice || "").trim(),
+    "",
+    "4) MC视角情报（她知道 / 不知道）",
+    String(obj.mc_intel || "").trim(),
+    "",
+    "5) 关系初始动力学（此刻已成立）",
+    String(obj.relationship_dynamics || "").trim(),
+    "",
+  ];
+
+  if (mode === "timeline") {
+    lines.push("6) 三幕时间线骨架（细节留白）");
+    lines.push(String(obj.timeline || "").trim());
+    lines.push("");
+    lines.push("7) 终局兑现说明（与F/X/T/G相关轴对齐）");
+    lines.push(String(obj.ending_payoff || "").trim());
+    lines.push("");
+    lines.push("8) 选轴映射说明");
+  } else {
+    lines.push("6) 选轴映射说明");
+  }
+
+  const mappings = Array.isArray(obj.axis_mapping) ? obj.axis_mapping : [];
+  for (const m of mappings) lines.push(`- ${String(m).trim()}`);
+  lines.push("");
+
+  if (mode === "timeline") {
+    lines.push("9) 矛盾度与取舍说明");
+    lines.push(String(obj.tradeoff_notes || "").trim());
+    lines.push("");
+    lines.push("10) 下次重生成建议");
+    lines.push(String(obj.regen_suggestion || "").trim());
+    lines.push("");
+    lines.push("11) 开场片段（250~450字，MC第一视角）");
+  } else {
+    lines.push("7) 矛盾度与取舍说明");
+    lines.push(String(obj.tradeoff_notes || "").trim());
+    lines.push("");
+    lines.push("8) 下次重生成建议");
+    lines.push(String(obj.regen_suggestion || "").trim());
+    lines.push("");
+    lines.push("9) 开场片段（300~500字，MC第一视角）");
+  }
+
+  lines.push(String(obj.opening_scene || "").trim());
+  return lines.join("\n").trim();
 }
 
 function sanitizeModelOutput(text) {
