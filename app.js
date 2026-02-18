@@ -397,6 +397,8 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     fallback_request_started: "降级模型生成中",
     fallback_response_received: "降级模型返回",
     upstream_response_received: "初稿已生成",
+    structured_parse_failed: "结构化解析失败，启动JSON修复",
+    structured_parse_recovered: "JSON修复成功",
     alignment_check_started: "一致性核对中",
     alignment_check_passed: "一致性核对通过",
     alignment_check_failed: "一致性核对未通过",

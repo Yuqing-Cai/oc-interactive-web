@@ -187,15 +187,23 @@ async function runGeneration(body, env, hooks = {}) {
     throw e;
   }
 
+  let repaired = false;
   let structured = parseStructuredOutput(rawContent, mode);
   if (!structured.ok) {
-    const e = new Error(`结构化输出校验失败：${structured.reason}`);
-    e.status = 502;
-    throw e;
+    mark("structured_parse_failed", { reason: structured.reason });
+    const coerced = await coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode);
+    if (coerced) {
+      structured = { ok: true, value: coerced };
+      repaired = true;
+      mark("structured_parse_recovered");
+    } else {
+      const e = new Error(`结构化输出校验失败：${structured.reason}`);
+      e.status = 502;
+      throw e;
+    }
   }
 
   const maxAlignRounds = Math.max(1, Number(env.ALIGNMENT_MAX_ROUNDS || 3));
-  let repaired = false;
   let alignPass = false;
   let lastIssues = [];
 
@@ -523,6 +531,51 @@ function normalizeJsonLikeContent(raw) {
   }
 
   return text;
+}
+
+async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
+  const prompt = [
+    "你是JSON修复器。把输入内容修复/转换成严格符合给定JSON Schema的对象。",
+    "仅输出JSON对象，不要解释，不要markdown。",
+    "若输入是散文，请提取其中可用信息并补全为自洽对象。",
+    "输入内容：",
+    typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent),
+  ].join("\n");
+
+  const res = await fetchWithTimeout(
+    apiUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: mode === "timeline" ? 3800 : 2800,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "oc_profile",
+            strict: true,
+            schema: buildOutputSchema(mode),
+          },
+        },
+        messages: [
+          { role: "system", content: "你是严格JSON修复器，仅输出合法JSON。" },
+          { role: "user", content: prompt },
+        ],
+      }),
+    },
+    30000
+  );
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const raw = data?.choices?.[0]?.message?.content;
+  const parsed = parseStructuredOutput(raw, mode);
+  return parsed.ok ? parsed.value : null;
 }
 
 async function runAlignmentCheck(apiUrl, apiKey, model, structured, selections, extraPrompt, mode) {
