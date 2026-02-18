@@ -127,6 +127,7 @@ async function runGeneration(body, env, hooks = {}) {
 
   const systemPrompt = buildSystemPrompt(mode, strictOutput);
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
+  const hardConstraints = buildHardConstraints(selections, extraPrompt);
 
   const payload = {
     model,
@@ -202,6 +203,50 @@ async function runGeneration(body, env, hooks = {}) {
   }
 
   let repaired = false;
+
+  // 无论 strictOutput 是否开启，都做一次“硬约束一致性”检查，避免明显违约（如处男/下位被写反）。
+  const violations = detectHardConstraintViolations(content, hardConstraints);
+  if (violations.length) {
+    mark("constraint_violation_detected", { count: violations.length });
+    const fixPrompt = buildConstraintFixPrompt(content, hardConstraints, violations, mode);
+    const fixUpstream = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.4,
+          messages: [
+            {
+              role: "system",
+              content: "你是约束纠偏器。只输出修正后的最终正文，不解释。",
+            },
+            { role: "user", content: fixPrompt },
+          ],
+        }),
+      },
+      15000
+    );
+
+    if (fixUpstream.ok) {
+      const fixData = await fixUpstream.json();
+      const fixed = sanitizeModelOutput(fixData?.choices?.[0]?.message?.content);
+      if (fixed) {
+        content = fixed;
+        repaired = true;
+        mark("constraint_fix_applied");
+      } else {
+        mark("constraint_fix_empty");
+      }
+    } else {
+      mark("constraint_fix_failed", { status: fixUpstream.status });
+    }
+  }
+
   if (strictOutput) {
     const check = validateOutput(content, mode);
     mark("output_validated", { ok: check.ok, missing: check.missing.length });
@@ -374,17 +419,77 @@ function buildSystemPrompt(mode, strictOutput = false) {
 }
 
 function buildUserPrompt(selections, extraPrompt, mode) {
+  const hard = buildHardConstraints(selections, extraPrompt);
   return [
     `请基于以下已选轴要素，生成‘高完成度单版本男主设定’（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）：`,
     selections.map((s) => `- ${s.axis}: ${s.option}`).join("\n"),
     extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
+    hard.length ? `\n硬约束（必须满足，不得违背）：\n${hard.map((h) => `- ${h}`).join("\n")}` : "",
     "\n生成原则：先写出自然连贯的故事内核，再让轴作为边界约束中度映射。",
     "不要逐条把轴机械翻译成剧情句；避免‘拼装感/缝合感’。",
     "不要把轴选项名称直接抄成世界观实体名；除非用户明确要求，否则按语义隐喻处理。",
     "‘矛盾度与取舍说明’和‘下次重生成建议’仅在确有必要时展开；若本次组合本身自洽，可用简短占位语句。",
     "不要输出‘开场时刻场景锚点’章节。",
     "MC禁止命名：除开场片段外统一称‘她’，开场片段使用第一人称‘我’且不出现姓名。",
-    "提醒：输出中可说明‘这是所有可能性中的一种实现’，但正文必须完整具体。"
+    "提醒：输出中可说明‘这是所有可能性中的一种实现’，但正文必须完整具体。",
+  ].join("\n");
+}
+
+function buildHardConstraints(selections = [], extraPrompt = "") {
+  const codes = new Set(
+    selections
+      .map((s) => String(s?.option || "").trim().match(/^([A-Z]\d)/)?.[1])
+      .filter(Boolean)
+  );
+  const text = String(extraPrompt || "");
+  const out = [];
+
+  if (codes.has("D2")) out.push("男主在亲密关系权力中处于下位，MC相对更主动/更主导；不得写成男主长期掌控或压制MC。");
+  if (codes.has("D1")) out.push("男主在亲密关系权力中处于上位，MC相对被动；不得写成MC全面主导男主。");
+
+  if (/处男|无性经历|完全无性经历/.test(text)) {
+    out.push("男主必须为处男，且无任何既往性关系/性行为经历。不得出现前任性史或发生过性关系的描述。");
+  }
+  if (/无情感经历|完全无情感经历|无恋爱经历/.test(text)) {
+    out.push("男主无既往恋爱经历，不得出现前任/旧爱/长期恋爱史。");
+  }
+  if (/无辱女|不要辱女|禁辱女/.test(text)) {
+    out.push("禁止辱女叙事与厌女表达，冲突不得建立在贬损女性人格上。");
+  }
+
+  return out;
+}
+
+function detectHardConstraintViolations(content = "", constraints = []) {
+  const text = String(content || "");
+  const v = [];
+
+  if (constraints.some((c) => c.includes("处男")) && /(发生过|有过).{0,8}(性关系|上床|睡过)|前任性史|经验丰富/.test(text)) {
+    v.push("出现了与‘处男/无性经历’冲突的描述。");
+  }
+  if (constraints.some((c) => c.includes("无既往恋爱经历")) && /前任|旧爱|上一段恋爱|曾经的女友|前女友/.test(text)) {
+    v.push("出现了与‘无情感经历’冲突的前任/旧爱描述。");
+  }
+  if (constraints.some((c) => c.includes("处于下位")) && (/男主.*(控制|命令|支配|压制).*她/.test(text) || /她.*(服从|听命于).*男主/.test(text))) {
+    v.push("D2（男主下位）被写反，出现男主主导压制倾向。");
+  }
+  if (/\bMC[:：]\s*[\u4e00-\u9fa5]{2,3}/.test(text)) {
+    v.push("检测到MC可能被命名，违反‘MC不命名’约束。");
+  }
+
+  return v;
+}
+
+function buildConstraintFixPrompt(draft, constraints, violations, mode) {
+  return [
+    `请修正下列文本使其严格满足约束（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）。`,
+    "仅输出修正后的最终正文，不要解释。",
+    `硬约束：\n${constraints.map((c) => `- ${c}`).join("\n")}`,
+    `发现的问题：\n${violations.map((x) => `- ${x}`).join("\n")}`,
+    "保持原有结构标题不变（尤其不要新增‘开场时刻场景锚点’）。",
+    "开场片段使用第一人称‘我’，其余部分称MC为‘她’。",
+    "待修正文：",
+    draft,
   ].join("\n");
 }
 
