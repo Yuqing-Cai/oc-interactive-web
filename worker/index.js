@@ -277,7 +277,7 @@ async function runGeneration(body, env, hooks = {}) {
       "- 保持其余段落与结构不变。",
       "- 不要新增解释，不要删减已有关键设定。",
       "- 仅输出修补后的完整正文。",
-      "当前正文："
+      "当前正文：",
       content,
     ].join("\n");
 
