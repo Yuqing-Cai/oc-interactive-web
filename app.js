@@ -405,6 +405,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     upstream_truncated_retry: "检测到截断，使用保守参数重试",
     structured_parse_failed: "结构化解析失败，启动JSON修复",
     structured_parse_recovered: "JSON修复成功",
+    structured_rebuilt_from_plan: "已基于骨架重建完整结果",
     alignment_check_started: "一致性核对中",
     alignment_rule_failed: "规则核对未通过，按问题重写",
     alignment_check_passed: "一致性核对通过",

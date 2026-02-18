@@ -239,6 +239,14 @@ async function runGeneration(body, env, hooks = {}) {
         }
       }
       if (!structured.ok) {
+        const rebuilt = await rebuildFromPlan(apiUrl, apiKey, finalModel, mode, planParsed.value, selections, extraPrompt);
+        if (rebuilt) {
+          structured = { ok: true, value: rebuilt };
+          repaired = true;
+          mark("structured_rebuilt_from_plan");
+        }
+      }
+      if (!structured.ok) {
         const e = new Error(`结构化输出校验失败：${structured.reason}`);
         e.status = 502;
         throw e;
@@ -664,25 +672,46 @@ function parseStructuredOutput(raw, mode) {
   ];
 
   for (const [key, minLen] of requiredTextFields) {
-    if (typeof obj[key] !== "string" || obj[key].trim().length < minLen) {
+    obj[key] = normalizeTextField(obj[key]);
+    if (obj[key].length < minLen) {
       return { ok: false, reason: `${key} 字段无效` };
     }
   }
 
-  if (typeof obj.male_profile.profile_body !== "string" || obj.male_profile.profile_body.trim().length < 300) {
+  obj.male_profile.profile_body = normalizeTextField(obj.male_profile.profile_body);
+  if (obj.male_profile.profile_body.length < 300) {
     return { ok: false, reason: "profile_body 字段无效" };
   }
 
-  if (!Array.isArray(obj.axis_mapping) || obj.axis_mapping.length < 3 || obj.axis_mapping.some((x) => typeof x !== "string" || !x.trim())) {
-    return { ok: false, reason: "axis_mapping 字段无效" };
-  }
+  if (!Array.isArray(obj.axis_mapping)) return { ok: false, reason: "axis_mapping 字段无效" };
+  obj.axis_mapping = obj.axis_mapping.map((x) => normalizeTextField(x)).filter(Boolean);
+  if (obj.axis_mapping.length < 3) return { ok: false, reason: "axis_mapping 字段无效" };
 
   if (mode === "timeline") {
-    if (typeof obj.timeline !== "string" || obj.timeline.trim().length < 100) return { ok: false, reason: "timeline 字段无效" };
-    if (typeof obj.ending_payoff !== "string" || obj.ending_payoff.trim().length < 60) return { ok: false, reason: "ending_payoff 字段无效" };
+    obj.timeline = normalizeTextField(obj.timeline);
+    obj.ending_payoff = normalizeTextField(obj.ending_payoff);
+    if (obj.timeline.length < 100) return { ok: false, reason: "timeline 字段无效" };
+    if (obj.ending_payoff.length < 60) return { ok: false, reason: "ending_payoff 字段无效" };
   }
 
   return { ok: true, value: obj };
+}
+
+function normalizeTextField(value) {
+  if (typeof value === "string") return value.trim();
+  if (value == null) return "";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map((x) => normalizeTextField(x)).filter(Boolean).join("\n").trim();
+  if (typeof value === "object") {
+    const preferred = [value.text, value.content, value.value, value.description].map((x) => normalizeTextField(x)).find(Boolean);
+    if (preferred) return preferred;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return "";
 }
 
 function normalizeMbti(value) {
@@ -785,6 +814,28 @@ async function coerceToPlanJson(apiUrl, apiKey, model, rawContent, mode) {
   const data = await res.json();
   const raw = data?.choices?.[0]?.message?.content;
   const parsed = parsePlanOutput(raw, mode);
+  return parsed.ok ? parsed.value : null;
+}
+
+async function rebuildFromPlan(apiUrl, apiKey, model, mode, plan, selections, extraPrompt) {
+  const payload = {
+    model,
+    temperature: 0.35,
+    max_tokens: mode === "timeline" ? 3000 : 2300,
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "oc_profile", strict: true, schema: buildOutputSchema(mode) },
+    },
+    messages: [
+      { role: "system", content: "你是结构化扩写器。只输出符合schema的完整JSON。" },
+      { role: "user", content: buildExpansionUserPrompt(selections, extraPrompt, mode, plan) },
+    ],
+  };
+
+  const res = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: 90000, retries: 0 });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const parsed = parseStructuredOutput(data?.choices?.[0]?.message?.content, mode);
   return parsed.ok ? parsed.value : null;
 }
 
