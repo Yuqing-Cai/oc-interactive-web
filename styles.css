@@ -194,16 +194,16 @@ button.ghost {
 }
 .result { margin-top: 6px; }
 .result-title {
-  margin: 10px 0 4px;
-  font-size: 15px;
-  line-height: 1.35;
+  margin: 14px 0 6px;
+  font-size: 16px;
+  line-height: 1.4;
   color: var(--text);
 }
 .result-line {
-  line-height: 1.55;
+  line-height: 1.7;
   color: var(--muted);
   white-space: pre-wrap;
-  font-size: 13px;
+  font-size: 14px;
 }
 .result-line strong { color: var(--text); font-weight: 700; }
 .result-line em { color: color-mix(in srgb, var(--text) 85%, var(--muted) 15%); font-style: italic; }
@@ -214,8 +214,8 @@ button.ghost {
   border-radius: 4px;
   background: color-mix(in srgb, var(--input-bg) 75%, transparent 25%);
 }
-.result-bullet { padding-left: 8px; }
-.result-blank { height: 5px; }
+.result-bullet { padding-left: 10px; }
+.result-blank { height: 8px; }
 
 .trace-log {
   display: grid;

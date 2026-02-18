@@ -634,11 +634,21 @@ function renderResultContent(text = "") {
       const line = raw.trimEnd();
       if (!line.trim()) return `<div class="result-line result-blank"></div>`;
 
+      if (/^#{1,6}\s+/.test(line)) {
+        const title = line.replace(/^#{1,6}\s+/, "");
+        return `<h4 class="result-title">${renderInlineMarkdown(title)}</h4>`;
+      }
+
+      if (/^\*\*\s*\d+\)\s+.*\*\*$/.test(line)) {
+        const title = line.replace(/^\*\*\s*/, "").replace(/\*\*$/, "");
+        return `<h4 class="result-title">${renderInlineMarkdown(title)}</h4>`;
+      }
+
       if (/^\d+\)\s+/.test(line)) {
         return `<h4 class="result-title">${renderInlineMarkdown(line)}</h4>`;
       }
 
-      if (/^-\s+/.test(line)) {
+      if (/^[-*]\s+/.test(line)) {
         return `<div class="result-line result-bullet">${renderInlineMarkdown(line)}</div>`;
       }
 
@@ -651,7 +661,9 @@ function renderInlineMarkdown(input = "") {
   const escaped = escapeHtml(input);
   return escaped
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/_(.+?)_/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, "<code>$1</code>");
 }
 
