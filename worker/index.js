@@ -153,7 +153,7 @@ async function runGeneration(body, env, hooks = {}) {
     apiUrl,
     apiKey,
     payload,
-    { timeoutMs: 90000, retries: 1 }
+    { timeoutMs: 120000, retries: 1 }
   );
 
   if (!upstream.ok && isRetryableStatus(upstream.status) && fallbackModel) {
@@ -215,18 +215,20 @@ async function runGeneration(body, env, hooks = {}) {
   }
 
   const maxAlignRounds = Math.max(1, Number(env.ALIGNMENT_MAX_ROUNDS || 2));
+  const enableModelAudit = String(env.ENABLE_MODEL_AUDIT || "false").toLowerCase() === "true";
   let alignPass = false;
   let lastIssues = [];
 
   for (let round = 1; round <= maxAlignRounds; round++) {
-    mark("alignment_check_started", { round, maxAlignRounds });
+    mark("alignment_check_started", { round, maxAlignRounds, enableModelAudit });
     const ruleIssues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
     let check = { pass: ruleIssues.length === 0, issues: ruleIssues };
 
-    if (check.pass) {
-      check = await runAlignmentCheck(apiUrl, apiKey, model, structured.value, selections, extraPrompt, mode);
-    } else {
+    if (!check.pass) {
       mark("alignment_rule_failed", { round, issues: ruleIssues.length });
+    } else if (enableModelAudit) {
+      // 可选：模型语义审稿（默认关闭，避免额外长耗时）
+      check = await runAlignmentCheck(apiUrl, apiKey, model, structured.value, selections, extraPrompt, mode);
     }
 
     if (check.pass) {
@@ -279,7 +281,7 @@ function mapError(err) {
       status: 504,
       code: "UPSTREAM_TIMEOUT",
       message:
-        "模型响应超时（单次请求上限约90秒，已自动重试/降级）。通常是上游拥塞或当前提示过重；请重试或减少一次生成负载。",
+        "模型响应超时（单次请求上限约120秒，已自动重试/降级）。通常是上游拥塞或当前提示过重；请重试。",
     };
   }
 
