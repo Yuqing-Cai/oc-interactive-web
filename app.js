@@ -405,6 +405,9 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     consistency_pass_applied: "一致性修订已应用",
     consistency_pass_timeout_skipped: "一致性修订超时，已跳过（保留主稿）",
     consistency_pass_error_skipped: "一致性修订异常，已跳过（保留主稿）",
+    personality_fields_missing: "检测到缺少MBTI/九型，启动定向修补",
+    personality_fields_patched: "MBTI/九型已补齐",
+    personality_fields_patch_failed: "MBTI/九型补写失败",
     upstream_error: "模型请求失败",
     completed: "生成流程完成",
   };

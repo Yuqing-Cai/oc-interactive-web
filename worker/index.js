@@ -268,14 +268,15 @@ async function runGeneration(body, env, hooks = {}) {
   }
 
   // 无论 strictOutput 是否开启，都强制检查MBTI+九型是否出现；缺失则进行定向补写。
-  if (!/(MBTI|迈尔斯|十六型)/.test(content) || !/(九型|Enneagram|\bw\d\b)/i.test(content)) {
+  if (!hasPersonalityFields(content)) {
     mark("personality_fields_missing");
     const patchPrompt = [
       "请仅修补‘男主完整档案’段落，确保明确出现MBTI与九型人格（可含翼型）。",
       "要求：",
+      "- 在男主完整档案中显式出现两行字段：‘MBTI：...’与‘九型人格：...’。",
       "- 保持其余段落与结构不变。",
       "- 不要新增解释，不要删减已有关键设定。",
-      "- 仅输出修补后的完整正文。",
+      "- 仅输出修补后的完整正文。"
       "当前正文：",
       content,
     ].join("\n");
@@ -292,26 +293,37 @@ async function runGeneration(body, env, hooks = {}) {
           body: JSON.stringify({
             model,
             temperature: 0.2,
-            max_tokens: mode === "timeline" ? 2600 : 1800,
+            max_tokens: mode === "timeline" ? 3200 : 2400,
             messages: [
               { role: "system", content: "你是文本定向修补器。仅输出修补后正文。" },
               { role: "user", content: patchPrompt },
             ],
           }),
         },
-        10000
+        30000
       );
       if (patchUpstream.ok) {
         const patchData = await patchUpstream.json();
         const patched = sanitizeModelOutput(patchData?.choices?.[0]?.message?.content);
-        if (patched) {
+        if (patched && hasPersonalityFields(patched)) {
           content = patched;
           repaired = true;
           mark("personality_fields_patched");
+        } else {
+          mark("personality_fields_patch_failed");
         }
+      } else {
+        mark("personality_fields_patch_failed", { status: patchUpstream.status });
       }
     } catch {
       mark("personality_fields_patch_failed");
+    }
+
+    // 兜底：若仍缺失，直接报错而不是输出不合格文稿。
+    if (!hasPersonalityFields(content)) {
+      const e = new Error("生成结果缺少MBTI或九型人格（硬约束未满足）。请重试。");
+      e.status = 502;
+      throw e;
     }
   }
 
@@ -503,6 +515,7 @@ function buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints =
     "不要把轴选项名称直接抄成世界观实体名；除非用户明确要求，否则按语义隐喻处理。",
     "‘矛盾度与取舍说明’和‘下次重生成建议’仅在确有必要时展开；若本次组合本身自洽，可用简短占位语句。",
     "请在最终输出前做一次整体自检：确保与提炼硬约束一致，不一致则先改写后输出。",
+    "男主完整档案中必须显式出现两行：‘MBTI：...’与‘九型人格：...’。"
     "提醒：输出中可说明‘这是所有可能性中的一种实现’，但正文必须完整具体。",
   ].join("\n");
 }
@@ -517,6 +530,7 @@ function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode, synthe
     "- 不得新增‘开场时刻场景锚点’章节。",
     "- MC不得命名；除开场片段外称‘她’，开场片段用第一人称‘我’。",
     "- 男主完整档案必须出现MBTI与九型人格（可含翼型），B1/B2/B3均不得省略。",
+    "- 男主完整档案中必须显式有两行字段：‘MBTI：...’与‘九型人格：...’。"
     "- 男主完整档案必须是完整背景叙述并按身体类型自适应，不得是碎片字段清单。",
     "已选轴：",
     selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
@@ -548,6 +562,13 @@ function safeParseConstraintsJson(raw) {
   } catch {
     return [];
   }
+}
+
+function hasPersonalityFields(content = "") {
+  const text = String(content || "");
+  const hasMbti = /(MBTI|迈尔斯|十六型|16型)/i.test(text);
+  const hasEnnea = /(九型|Enneagram|\bw\d\b)/i.test(text);
+  return hasMbti && hasEnnea;
 }
 
 function sanitizeModelOutput(text) {
