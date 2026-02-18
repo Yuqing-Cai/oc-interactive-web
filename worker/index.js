@@ -179,7 +179,18 @@ async function runGeneration(body, env, hooks = {}) {
 
   mark("upstream_response_received");
   const data = await upstream.json();
-  const rawContent = data?.choices?.[0]?.message?.content;
+  const finishReason = data?.choices?.[0]?.finish_reason;
+  let rawContent = data?.choices?.[0]?.message?.content;
+
+  if (finishReason === "length") {
+    mark("upstream_truncated_retry");
+    const retryPayload = { ...payload, temperature: 0.45, max_tokens: Math.min(payload.max_tokens, mode === "timeline" ? 3200 : 2400) };
+    const retryRes = await requestWithTransientRetries(apiUrl, apiKey, retryPayload, { timeoutMs: 40000, retries: 1 });
+    if (retryRes.ok) {
+      const retryData = await retryRes.json();
+      rawContent = retryData?.choices?.[0]?.message?.content || rawContent;
+    }
+  }
 
   if (!rawContent) {
     const e = new Error("No content in model response.");
@@ -209,7 +220,15 @@ async function runGeneration(body, env, hooks = {}) {
 
   for (let round = 1; round <= maxAlignRounds; round++) {
     mark("alignment_check_started", { round, maxAlignRounds });
-    const check = await runAlignmentCheck(apiUrl, apiKey, model, structured.value, selections, extraPrompt, mode);
+    const ruleIssues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
+    let check = { pass: ruleIssues.length === 0, issues: ruleIssues };
+
+    if (check.pass) {
+      check = await runAlignmentCheck(apiUrl, apiKey, model, structured.value, selections, extraPrompt, mode);
+    } else {
+      mark("alignment_rule_failed", { round, issues: ruleIssues.length });
+    }
+
     if (check.pass) {
       alignPass = true;
       mark("alignment_check_passed", { round });
@@ -291,83 +310,16 @@ function detectMode(selections) {
 }
 
 function buildSystemPrompt(mode) {
-  const common = [
-    "你是‘OC男主设定总设计师’。",
-    "你必须返回符合 JSON Schema 的对象，不得输出 markdown、解释或额外文本。",
-    "同一组选项可能对应许多自洽男主；此处只输出一种高完成度实现。",
-    "输出必须并列呈现：玩家上帝视角可见信息 + MC当下视角可见信息。",
-    "严禁输出思考过程、推理链、注释，严禁输出<think>、[思考]、Reasoning。",
-    "文风要求：具体、可视化、可执行；避免空泛辞藻。",
-    "正文第一行禁止任何总标题或标签（例如‘#高完成度…’、‘##…’），直接从规定段落标题开始。",
-    "段内叙述保持连贯，减少碎片化短句和过度分段。整体语气更像一篇连贯设定文，而非问卷报告。",
-    "男主姓名不要使用高频言情网文常见姓氏（如顾、沈、傅、陆、霍、厉、薄、裴、谢、韩、苏等）；优先选择更少见但自然的中文姓氏。",
-    "叙述禁止使用第一人称创作者口吻（如‘我保留了…’‘我建议…’）。统一使用客观表述，例如‘此处’、‘该设定’、‘故事中’。",
-    "男主完整档案中必须明确写出：MBTI 与 九型人格（可含翼型），该要求对B1/B2/B3全部生效，不得省略。",
-    "男主完整档案必须是‘完整背景档案’，不能只写碎片字段。字段需按身体类型自适应：若为凡人（B1）强调成长/家庭来源、教育训练、职业变迁、资源网络与现实生活结构；若为非人/超越肉体（B2/B3）强调起源机制、存在形态、能力代价、与人类社会接口、稳定性与失控条件。无论何种类型，都必须包含亲密关系边界（与用户硬约束一致）和当前核心冲突。",
-    "男主完整档案应以连续叙述为主，可带少量小标题；禁止仅用‘姓名/年龄/职业’式短条目堆砌。",
-    "MC禁止命名：不要给MC起任何名字。除开场片段外统一称‘她’；开场片段中使用第一人称‘我’。",
-    "核心策略：先形成自然连贯、可落地的故事主线，再让轴作为边界约束做中度对齐。",
-    "轴的作用是‘限制不该出现的方向’，不是逐条拼装剧情；不要写成机械缝合。",
-    "轴标签多为概念隐喻，不要机械字面化为专有名词地点/组织/术语（例如W3‘虚无之海’默认是心理与时代气候隐喻，而非必须新增地名）。",
-    "禁止‘悬浮抽象化叙述’：少用宏大空泛比喻，优先给具体职业、关系动作、场景细节与可观测行为。",
-    "正文不要先写‘这是一个关于……的故事内核’这类导语，必须直接进入结构化段落。",
-    "可以隐式体现多数轴，不要求每条轴都显式点名。",
-    "映射强度保持中度：既看得出轴影响，也不出现‘逐轴填空感’。",
-    "禁止输出‘待定/以后补充/可任意扩展’等空位表述。",
-    "在输出前必须进行自检：逐条检查选轴、补充提示词与人物设定是否一致；若发现冲突或缺项，先内部改写直至通过自检再输出。",
-    "‘选轴映射说明’必须使用 bullet points（每条以‘- ’开头），并控制在 4~8 条。"
-  ];
-
-  if (mode === "timeline") {
-    return [
-      ...common,
-      "",
-      "模式：完整时间线骨架模式（因用户选择了终局/代价/时间/神权相关轴）。",
-      "要求：时间线完整，但桥段细节故意留白，不要把每一幕写成完整小说章节。",
-      "",
-      "【硬性输出结构】按以下标题组织，但正文段落之间要自然过渡，减少‘模板感’：",
-      "1) 设定总览（玩家上帝视角）",
-      "2) 男主完整档案（玩家上帝视角）",
-      "3) 世界观与时代切片（玩家上帝视角）",
-      "4) MC视角情报（她知道 / 不知道）",
-      "5) 关系初始动力学（此刻已成立）",
-      "6) 三幕时间线骨架（细节留白）",
-      "   - 第一幕：起势；第二幕：失衡；第三幕：兑现与终局。",
-      "   - 每幕必须包含：关键事件节点、情感状态变化、代价压力。",
-      "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
-      "8) 选轴映射说明（中度映射，bullet points，4~8条）",
-      "9) 矛盾度与取舍说明（自洽时可简短占位，不强造冲突）",
-      "10) 下次重生成建议（自洽时可写无需改轴，仅微调细节）",
-      "11) 开场片段（250~450字，MC第一视角）",
-      "   - 男主完整档案章节建议不少于700字，且必须体现‘过去→现在’的成因链条，而非平铺字段。",
-      "   - 开场片段必须使用MC第一人称（我），并出现可感知的动作、环境细节与当下冲突。",
-      "   - 禁止在开场片段中给MC命名。",
-      "",
-      "信息密度要求：优先保证可读与速度，总字数建议 900~1400 中文字。",
-    ].join("\n");
-  }
-
   return [
-    ...common,
-    "",
-    "模式：开场静态模式（用户未指定终局相关轴）。",
-    "仅生成开场时刻的完整初始态，不展开完整时间线。",
-    "",
-    "【硬性输出结构】按以下标题组织，但正文段落之间要自然过渡，减少‘模板感’：",
-    "1) 设定总览（玩家上帝视角）",
-    "2) 男主完整档案（玩家上帝视角）",
-    "3) 世界观与时代切片（玩家上帝视角）",
-    "4) MC视角情报（她知道 / 不知道）",
-    "5) 关系初始动力学（此刻已成立）",
-    "6) 选轴映射说明（中度映射，bullet points，4~8条）",
-    "7) 矛盾度与取舍说明（自洽时可简短占位，不强造冲突）",
-    "8) 下次重生成建议（自洽时可写无需改轴，仅微调细节）",
-    "9) 开场片段（300~500字，MC第一视角）",
-    "   - 男主完整档案章节建议不少于550字，且必须体现‘过去→现在’的成因链条，而非平铺字段。",
-    "   - 开场片段必须使用MC第一人称（我），并出现可感知的动作、环境细节与当下冲突。",
-    "   - 禁止在开场片段中给MC命名。",
-    "",
-    "信息密度要求：优先保证可读与速度，总字数建议 800~1200 中文字。", 
+    "你是‘OC男主设定总设计师’。",
+    "你必须只返回符合 JSON Schema 的对象，不得输出 markdown、解释、代码块或任何额外文本。",
+    "目标是高质量设定，但输出载体必须是结构化字段，不要自行输出编号标题。",
+    "同一组选项可能对应多种实现，这里只给一种高完成度实现。",
+    "硬约束：MC 不得命名；男主档案必须详细、连续叙述且包含过去→现在成因链。",
+    "硬约束：无论 B 轴如何，male_profile.profile_body 都要完整详尽，禁止简历式条目堆砌。",
+    "硬约束：MBTI、九型人格、副型必须填写且自洽。",
+    "映射规则：根据已选轴做中度映射，不能反向违背。",
+    `当前模式：${mode}`,
   ].join("\n");
 }
 
@@ -412,6 +364,51 @@ function buildAlignmentCheckPrompt(structured, selections, extraPrompt, mode) {
     "待审稿件(JSON对象)：",
     JSON.stringify(structured),
   ].join("\n");
+}
+
+function checkProgrammaticAlignment(obj, selections, extraPrompt = "") {
+  const issues = [];
+  const textFields = [
+    obj?.overview,
+    obj?.male_profile?.profile_body,
+    obj?.world_slice,
+    obj?.mc_intel,
+    obj?.relationship_dynamics,
+    obj?.timeline,
+    obj?.ending_payoff,
+    obj?.tradeoff_notes,
+    obj?.regen_suggestion,
+    obj?.opening_scene,
+    ...(Array.isArray(obj?.axis_mapping) ? obj.axis_mapping : []),
+  ].map((x) => String(x || "")).join("\n");
+
+  if (/(她叫|名叫|名字是|MC叫|女主叫)/.test(textFields)) issues.push("疑似给MC命名或显式命名描述");
+  if (String(obj?.male_profile?.profile_body || "").length < 520) issues.push("男主背景档案不够详细");
+
+  const axisHits = (Array.isArray(selections) ? selections : []).filter((s) => {
+    const keywords = [String(s?.option || ""), String(s?.detail || "")]
+      .flatMap((x) => x.split(/[（）、，。\s\-:：|]+/))
+      .map((x) => x.trim())
+      .filter((x) => x.length >= 2)
+      .slice(0, 5);
+    return keywords.some((k) => textFields.includes(k));
+  }).length;
+
+  if ((selections?.length || 0) >= 3 && axisHits < 2) issues.push("文本与选轴显式关联过弱，疑似未跟随选项");
+
+  if (extraPrompt && extraPrompt.length >= 4) {
+    const promptTokens = extraPrompt
+      .split(/[，。；;、\n\s]+/)
+      .map((x) => x.trim())
+      .filter((x) => x.length >= 2)
+      .slice(0, 8);
+    if (promptTokens.length) {
+      const hit = promptTokens.some((t) => textFields.includes(t));
+      if (!hit) issues.push("补充提示词未被明显落实");
+    }
+  }
+
+  return issues;
 }
 
 function parseAlignmentResult(raw) {
