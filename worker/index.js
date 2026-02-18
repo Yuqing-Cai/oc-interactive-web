@@ -126,58 +126,13 @@ async function runGeneration(body, env, hooks = {}) {
   mark("mode_decided", { mode });
 
   const systemPrompt = buildSystemPrompt(mode, strictOutput);
-
-  // Step 1/2：先让模型基于选轴+补充提示词提炼“硬约束”，再进入正文生成。
-  let synthesizedConstraints = [];
-  try {
-    mark("constraint_synthesis_started");
-    const synthUpstream = await fetchWithTimeout(
-      apiUrl,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.1,
-          max_tokens: 420,
-          messages: [
-            {
-              role: "system",
-              content:
-                "你是约束提炼器。根据选轴和补充提示词，只提炼必须被满足的硬约束。仅输出JSON：{\"hard_constraints\":[\"...\"]}。不要输出其他内容。",
-            },
-            {
-              role: "user",
-              content: buildConstraintSynthesisPrompt(selections, extraPrompt),
-            },
-          ],
-        }),
-      },
-      9000
-    );
-
-    if (synthUpstream.ok) {
-      const synthData = await synthUpstream.json();
-      const raw = synthData?.choices?.[0]?.message?.content || "";
-      const parsed = safeParseConstraintsJson(raw);
-      synthesizedConstraints = parsed;
-      mark("constraint_synthesis_applied", { count: synthesizedConstraints.length });
-    } else {
-      mark("constraint_synthesis_failed", { status: synthUpstream.status });
-    }
-  } catch (err) {
-    mark("constraint_synthesis_skipped", { reason: err?.name || "error" });
-  }
-
+  const synthesizedConstraints = [];
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints);
 
   const payload = {
     model,
     temperature: 0.85,
-    max_tokens: mode === "timeline" ? 3000 : 2200,
+    max_tokens: mode === "timeline" ? 4200 : 3200,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -240,12 +195,25 @@ async function runGeneration(body, env, hooks = {}) {
   mark("upstream_response_received");
   const data = await upstream.json();
   const rawContent = data?.choices?.[0]?.message?.content;
+  const finishReason = data?.choices?.[0]?.finish_reason;
   let content = sanitizeModelOutput(rawContent);
 
   if (!content) {
     const e = new Error("No content in model response.");
     e.status = 502;
     throw e;
+  }
+
+  // 若因 token 上限被截断，自动续写一次，尽量返回完整文稿。
+  if (finishReason === "length") {
+    mark("continuation_started");
+    const continuation = await continueLongOutput(apiUrl, apiKey, model, systemPrompt, userPrompt, content);
+    if (continuation) {
+      content = `${content}\n${continuation}`.trim();
+      mark("continuation_applied");
+    } else {
+      mark("continuation_empty");
+    }
   }
 
   let repaired = false;
@@ -275,7 +243,7 @@ async function runGeneration(body, env, hooks = {}) {
           ],
         }),
       },
-      8000
+      20000
     );
 
     if (consistencyUpstream.ok) {
@@ -395,8 +363,7 @@ async function runGeneration(body, env, hooks = {}) {
       mark("repair_skipped");
     }
   } else {
-    mark("output_validated", { ok: true, skipped: true });
-    mark("repair_skipped", { skipped: true });
+    // 非严格模式下不展示结构校验噪声阶段，减少系统状态冗余。
   }
 
   mark("completed", { repaired });
@@ -646,6 +613,38 @@ function buildRepairPrompt(draft, missing, mode) {
     "初稿：",
     draft,
   ].join("\n");
+}
+
+async function continueLongOutput(apiUrl, apiKey, model, systemPrompt, userPrompt, existingContent) {
+  const continuationUpstream = await fetchWithTimeout(
+    apiUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.7,
+        max_tokens: 1800,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+          { role: "assistant", content: existingContent },
+          {
+            role: "user",
+            content: "上文因长度被截断。请从上文最后一句继续输出剩余内容，不要重复已写内容，不要重写标题结构。",
+          },
+        ],
+      }),
+    },
+    40000
+  );
+
+  if (!continuationUpstream.ok) return "";
+  const continuationData = await continuationUpstream.json();
+  return sanitizeModelOutput(continuationData?.choices?.[0]?.message?.content || "");
 }
 
 async function fetchWithTimeout(url, init, timeoutMs = 85000) {
