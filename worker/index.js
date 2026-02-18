@@ -127,6 +127,7 @@ async function runGeneration(body, env, hooks = {}) {
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
   let finalModel = model;
+  let repaired = false;
   const fallbackModel = (env.FALLBACK_MODEL || "").trim();
 
   // Stage A: 先生成短骨架，锁定约束与方向。
@@ -163,11 +164,19 @@ async function runGeneration(body, env, hooks = {}) {
 
   const planData = await planRes.json();
   const planRaw = planData?.choices?.[0]?.message?.content;
-  const planParsed = parsePlanOutput(planRaw, mode);
+  let planParsed = parsePlanOutput(planRaw, mode);
   if (!planParsed.ok) {
-    const e = new Error(`结构骨架生成失败：${planParsed.reason}`);
-    e.status = 502;
-    throw e;
+    mark("plan_parse_failed", { reason: planParsed.reason });
+    const repairedPlan = await coerceToPlanJson(apiUrl, apiKey, finalModel, planRaw, mode);
+    if (repairedPlan) {
+      planParsed = { ok: true, value: repairedPlan };
+      repaired = true;
+      mark("plan_parse_recovered");
+    } else {
+      const e = new Error(`结构骨架生成失败：${planParsed.reason}`);
+      e.status = 502;
+      throw e;
+    }
   }
   mark("plan_response_received");
 
@@ -209,7 +218,6 @@ async function runGeneration(body, env, hooks = {}) {
     throw e;
   }
 
-  let repaired = false;
   let structured = parseStructuredOutput(rawContent, mode);
   if (!structured.ok) {
     mark("structured_parse_failed", { reason: structured.reason });
@@ -645,6 +653,50 @@ function normalizeJsonLikeContent(raw) {
   }
 
   return text;
+}
+
+async function coerceToPlanJson(apiUrl, apiKey, model, rawContent, mode) {
+  const prompt = [
+    "你是JSON修复器。把输入内容修复为严格符合给定骨架Schema的对象。",
+    "仅输出JSON对象，不要解释，不要markdown。",
+    "输入内容：",
+    typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent),
+  ].join("\n");
+
+  const res = await fetchWithTimeout(
+    apiUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 1800,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "oc_plan",
+            strict: true,
+            schema: buildPlanSchema(mode),
+          },
+        },
+        messages: [
+          { role: "system", content: "你是严格JSON修复器，仅输出合法JSON。" },
+          { role: "user", content: prompt },
+        ],
+      }),
+    },
+    45000
+  );
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const raw = data?.choices?.[0]?.message?.content;
+  const parsed = parsePlanOutput(raw, mode);
+  return parsed.ok ? parsed.value : null;
 }
 
 async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
