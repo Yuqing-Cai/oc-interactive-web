@@ -192,7 +192,21 @@ button.ghost {
   color: var(--text);
   font-weight: 600;
 }
-.result { white-space: pre-wrap; line-height: 1.6; margin-top: 6px; }
+.result { margin-top: 6px; }
+.result-title {
+  margin: 10px 0 4px;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--text);
+}
+.result-line {
+  line-height: 1.55;
+  color: var(--muted);
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.result-bullet { padding-left: 8px; }
+.result-blank { height: 5px; }
 
 .trace-log {
   display: grid;

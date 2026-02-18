@@ -336,7 +336,7 @@ async function generate(isRegenerate) {
 
     if (!finalContent) throw new Error("服务端未返回最终内容。请重试。");
 
-    resultEl.textContent = finalContent;
+    resultEl.innerHTML = renderResultContent(finalContent);
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
     setStatus(`生成完成（已运行 ${seconds.toFixed(1)} 秒）。`, false);
 
@@ -625,6 +625,26 @@ function syncMobileToggle() {
     return;
   }
   mobileInsightToggle.textContent = insightPanel.classList.contains("open") ? "收起解释面板" : "查看解释面板";
+}
+
+function renderResultContent(text = "") {
+  const lines = String(text).split("\n");
+  return lines
+    .map((raw) => {
+      const line = raw.trimEnd();
+      if (!line.trim()) return `<div class="result-line result-blank"></div>`;
+
+      if (/^\d+\)\s+/.test(line)) {
+        return `<h4 class="result-title">${escapeHtml(line)}</h4>`;
+      }
+
+      if (/^-\s+/.test(line)) {
+        return `<div class="result-line result-bullet">${escapeHtml(line)}</div>`;
+      }
+
+      return `<div class="result-line">${escapeHtml(line)}</div>`;
+    })
+    .join("");
 }
 
 function escapeHtml(str = "") {
