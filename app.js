@@ -98,6 +98,7 @@ const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
 const FIXED_MODEL = "MiniMax-M2.5";
+const DEBUG_TRACE = new URLSearchParams(window.location.search).get("debug") === "1";
 const defaultTheme = "cyan";
 if (themeSelect) {
   themeSelect.value = defaultTheme;
@@ -388,32 +389,42 @@ function setStatus(text, isError) {
 
 function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra = {}, elapsedMs = 0) {
   const labelMap = {
-    request_received: "收到生成请求",
-    mode_decided: "确定生成模式",
-    upstream_request_started: "向模型发起请求",
-    upstream_timeout: "主模型超时（若配置了降级模型将重试）",
-    fallback_request_started: "已切换快速模型重试",
-    fallback_response_received: "快速模型返回结果",
-    upstream_response_received: "收到模型初稿",
-    continuation_started: "检测到内容被截断，开始续写",
-    continuation_applied: "已拼接续写内容",
-    continuation_empty: "续写返回空内容",
-    output_validated: "完成结构校验",
-    repair_started: "触发自动修复",
-    repair_applied: "已应用修复结果",
-    repair_empty: "修复返回空内容（已忽略）",
-    repair_failed: "修复请求失败",
-    alignment_check_started: "开始对齐审稿（选轴+补充提示词）",
-    alignment_check_passed: "对齐审稿通过",
-    alignment_check_failed: "对齐审稿未通过，准备重写",
-    alignment_repair_started: "按审稿问题重写中",
-    alignment_repair_applied: "重写版本已应用",
-    alignment_repair_failed: "重写失败，准备下一轮",
+    request_received: "已接收请求",
+    mode_decided: "已确定生成模式",
+    upstream_request_started: "生成中",
+    upstream_timeout: "主模型超时，尝试降级",
+    fallback_request_started: "降级模型生成中",
+    fallback_response_received: "降级模型返回",
+    upstream_response_received: "初稿已生成",
+    alignment_check_started: "一致性核对中",
+    alignment_check_passed: "一致性核对通过",
+    alignment_check_failed: "一致性核对未通过",
+    alignment_repair_started: "按问题重写中",
+    alignment_repair_applied: "重写已应用",
+    alignment_repair_failed: "重写失败",
     upstream_error: "模型请求失败",
-    completed: "生成流程完成",
+    completed: "生成完成",
   };
 
   const items = Array.isArray(trace) ? trace : [];
+  const last = items.at(-1);
+  const totalSec = totalMs
+    ? (totalMs / 1000).toFixed(1)
+    : (Number(last?.t || 0) / 1000).toFixed(1);
+
+  if (!DEBUG_TRACE) {
+    const stage = last?.stage || "request_received";
+    const label = labelMap[stage] || "处理中";
+    const round = Number(last?.round || 0);
+    const maxRounds = Number(last?.maxAlignRounds || 0);
+    const roundTip = stage.startsWith("alignment_") && round
+      ? `（第 ${round}${maxRounds ? `/${maxRounds}` : ""} 轮）`
+      : "";
+
+    return `<div class="trace-log"><div class="trace-item"><span class="trace-time">${totalSec}s</span><span class="trace-text">${escapeHtml(label + roundTip)}</span></div></div>
+    <div class="trace-meta"><div>模式：${escapeHtml(mode || "未知")}</div><div>总耗时：${totalSec} 秒</div></div>`;
+  }
+
   let rows = items.length
     ? items
         .map((item) => {
@@ -423,18 +434,6 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
         })
         .join("")
     : `<div class="trace-item"><span class="trace-time">-</span><span class="trace-text">模型阶段日志不可用</span></div>`;
-
-  const last = items.at(-1);
-  const done = last?.stage === "completed";
-  const liveMs = elapsedMs || totalMs || Number(last?.t || 0);
-  if (last && !done && liveMs > Number(last.t || 0)) {
-    const nowSec = (liveMs / 1000).toFixed(1);
-    const runningFor = ((liveMs - Number(last.t || 0)) / 1000).toFixed(1);
-    const runningLabel = last.stage === "upstream_request_started"
-      ? `模型生成中（已持续 ${runningFor}s）`
-      : `阶段进行中（已持续 ${runningFor}s）`;
-    rows += `<div class="trace-item"><span class="trace-time">${nowSec}s</span><span class="trace-text">${escapeHtml(runningLabel)}</span></div>`;
-  }
 
   const timingRows = items.length > 1
     ? items.slice(1).map((item, idx) => {
@@ -447,27 +446,11 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     : "";
 
   const timingTable = timingRows
-    ? `<div style="margin:6px 0 4px 0;">
-        <div style="font-size:12px;opacity:.85;margin-bottom:3px;">阶段耗时拆解</div>
-        <table style="width:100%;font-size:12px;line-height:1.2;border-collapse:collapse;">
-          <thead><tr><th style="text-align:left;opacity:.7;padding:0 0 2px 0;">阶段</th><th style="text-align:right;opacity:.7;padding:0 0 2px 0;">耗时</th></tr></thead>
-          <tbody>${timingRows}</tbody>
-        </table>
-      </div>`
+    ? `<div style="margin:6px 0 4px 0;"><div style="font-size:12px;opacity:.85;margin-bottom:3px;">阶段耗时拆解（调试）</div><table style="width:100%;font-size:12px;line-height:1.2;border-collapse:collapse;"><thead><tr><th style="text-align:left;opacity:.7;padding:0 0 2px 0;">阶段</th><th style="text-align:right;opacity:.7;padding:0 0 2px 0;">耗时</th></tr></thead><tbody>${timingRows}</tbody></table></div>`
     : "";
 
-  const totalSec = totalMs
-    ? (totalMs / 1000).toFixed(1)
-    : (Number(items.at(-1)?.t || 0) / 1000).toFixed(1);
-
   return `<div class="trace-log">${rows}</div>${timingTable}
-    <div class="trace-meta">
-      <div>自动修复：${repaired ? "触发" : "未触发"}</div>
-      <div>模式：${escapeHtml(mode || "未知")}</div>
-      <div>实际模型：${escapeHtml(extra?.finalModel || FIXED_MODEL)}</div>
-      <div>降级重试：${extra?.fallbackUsed ? "是" : "否"}</div>
-      <div>总耗时：${totalSec} 秒</div>
-    </div>`;
+    <div class="trace-meta"><div>模式：${escapeHtml(mode || "未知")}</div><div>实际模型：${escapeHtml(extra?.finalModel || FIXED_MODEL)}</div><div>降级重试：${extra?.fallbackUsed ? "是" : "否"}</div><div>总耗时：${totalSec} 秒</div></div>`;
 }
 
 async function copyResult() {
