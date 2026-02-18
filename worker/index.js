@@ -146,53 +146,33 @@ async function runGeneration(body, env, hooks = {}) {
 
   let upstream;
   let finalModel = model;
+  const fallbackModel = (env.FALLBACK_MODEL || "").trim();
+
   mark("upstream_request_started", { model });
-  try {
-    upstream = await fetchWithTimeout(
+  upstream = await requestWithTransientRetries(
+    apiUrl,
+    apiKey,
+    payload,
+    { timeoutMs: 0, retries: 2 }
+  );
+
+  if (!upstream.ok && isRetryableStatus(upstream.status) && fallbackModel) {
+    mark("upstream_retryable_error", { status: upstream.status, fallbackModel });
+    mark("fallback_request_started", { model: fallbackModel });
+    finalModel = fallbackModel;
+    upstream = await requestWithTransientRetries(
       apiUrl,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-      },
-      0
+      apiKey,
+      { ...payload, model: fallbackModel, temperature: 0.55, max_tokens: Math.min(payload.max_tokens, 2800) },
+      { timeoutMs: 32000, retries: 1 }
     );
-  } catch (err) {
-    if (err?.name === "TimeoutError") {
-      const fallbackModel = (env.FALLBACK_MODEL || "").trim();
-      mark("upstream_timeout", { model, fallbackModel: fallbackModel || "<disabled>" });
-
-      if (!fallbackModel) {
-        throw err;
-      }
-
-      mark("fallback_request_started", { model: fallbackModel });
-      finalModel = fallbackModel;
-      upstream = await fetchWithTimeout(
-        apiUrl,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({ ...payload, model: fallbackModel, temperature: 0.8 }),
-        },
-        28000
-      );
-      mark("fallback_response_received", { status: upstream.status });
-    } else {
-      throw err;
-    }
+    mark("fallback_response_received", { status: upstream.status });
   }
 
   if (!upstream.ok) {
     const text = await upstream.text();
     mark("upstream_error", { status: upstream.status });
-    const e = new Error(`Upstream error: ${text}`);
+    const e = new Error(`Upstream error(${upstream.status}): ${text}`);
     e.status = upstream.status;
     throw e;
   }
@@ -275,8 +255,18 @@ function mapError(err) {
         "模型响应超时（已达到服务端等待上限）。通常是上游生成耗时过长或短时波动，不代表你的本地网络有问题。",
     };
   }
+
+  const status = Number(err?.status || 500);
+  if (status === 524) {
+    return {
+      status: 524,
+      code: "UPSTREAM_524_TIMEOUT",
+      message: "上游模型网关超时（524）。已做自动重试，仍失败。通常是模型端拥塞或生成过长，请稍后重试。",
+    };
+  }
+
   return {
-    status: err?.status || 500,
+    status,
     code: err?.code || "UNEXPECTED_ERROR",
     message: err?.message || "Unexpected error",
   };
@@ -672,6 +662,49 @@ function renderStructuredMarkdown(obj, mode) {
 
   lines.push(String(obj.opening_scene || "").trim());
   return lines.join("\n").trim();
+}
+
+function isRetryableStatus(status) {
+  return [408, 409, 429, 500, 502, 503, 504, 520, 522, 524].includes(Number(status));
+}
+
+async function requestWithTransientRetries(apiUrl, apiKey, payload, opts = {}) {
+  const retries = Math.max(0, Number(opts.retries || 0));
+  const timeoutMs = Number(opts.timeoutMs || 0);
+
+  let lastErr = null;
+  let res = null;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      res = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(payload),
+        },
+        timeoutMs
+      );
+
+      if (res.ok) return res;
+      if (!isRetryableStatus(res.status) || i >= retries) return res;
+      await sleep(450 * (i + 1));
+    } catch (err) {
+      lastErr = err;
+      if (err?.name !== "TimeoutError" || i >= retries) throw err;
+      await sleep(500 * (i + 1));
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  return res;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchWithTimeout(url, init, timeoutMs = 85000) {

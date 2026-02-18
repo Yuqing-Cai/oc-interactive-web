@@ -393,6 +393,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     mode_decided: "已确定生成模式",
     upstream_request_started: "生成中",
     upstream_timeout: "主模型超时，尝试降级",
+    upstream_retryable_error: "主模型临时错误，尝试降级",
     fallback_request_started: "降级模型生成中",
     fallback_response_received: "降级模型返回",
     upstream_response_received: "初稿已生成",
