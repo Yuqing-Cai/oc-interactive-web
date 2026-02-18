@@ -443,7 +443,9 @@ function parsePlanOutput(raw, mode) {
   };
 
   if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
-  if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
+  const mbti = normalizeMbti(obj.male_profile.mbti);
+  if (!mbti) return { ok: false, reason: "MBTI 非法" };
+  obj.male_profile.mbti = mbti;
   if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
   const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant);
   if (!iv) return { ok: false, reason: "副型非法" };
@@ -493,16 +495,25 @@ function checkProgrammaticAlignment(obj, selections, extraPrompt = "") {
   if (/(她叫|名叫|名字是|MC叫|女主叫)/.test(textFields)) issues.push("疑似给MC命名或显式命名描述");
   if (String(obj?.male_profile?.profile_body || "").length < 520) issues.push("男主背景档案不够详细");
 
-  const axisHits = (Array.isArray(selections) ? selections : []).filter((s) => {
+  const list = Array.isArray(selections) ? selections : [];
+  const axisHits = list.filter((s) => {
     const keywords = [String(s?.option || ""), String(s?.detail || "")]
       .flatMap((x) => x.split(/[（）、，。\s\-:：|]+/))
       .map((x) => x.trim())
       .filter((x) => x.length >= 2)
-      .slice(0, 5);
+      .slice(0, 6);
     return keywords.some((k) => textFields.includes(k));
   }).length;
 
-  if ((selections?.length || 0) >= 3 && axisHits < 2) issues.push("文本与选轴显式关联过弱，疑似未跟随选项");
+  // 中等强度映射：不能无视选轴（太弱），也不能堆砌选项原文（太强/缝合感）
+  if (list.length >= 3 && axisHits < 2) issues.push("文本与选轴显式关联过弱，疑似未跟随选项");
+
+  const stitchedCount = list.reduce((n, s) => {
+    const raw = String(s?.option || "").trim();
+    if (!raw) return n;
+    return n + (textFields.split(raw).length - 1);
+  }, 0);
+  if (stitchedCount > Math.max(4, list.length + 1)) issues.push("选项原文重复堆砌过多，映射强度过高（疑似缝合）");
 
   if (extraPrompt && extraPrompt.length >= 4) {
     const promptTokens = extraPrompt
@@ -612,8 +623,8 @@ function parseStructuredOutput(raw, mode) {
 
   if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
 
-  const mbti = String(obj.male_profile.mbti || "").trim().toUpperCase();
-  if (!/^[EI][NS][FT][JP]$/.test(mbti)) return { ok: false, reason: "MBTI 非法" };
+  const mbti = normalizeMbti(obj.male_profile.mbti);
+  if (!mbti) return { ok: false, reason: "MBTI 非法" };
   obj.male_profile.mbti = mbti;
 
   if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
@@ -624,6 +635,13 @@ function parseStructuredOutput(raw, mode) {
 
   if (mode === "timeline" && !String(obj.timeline || "").trim()) return { ok: false, reason: "缺少三幕时间线" };
   return { ok: true, value: obj };
+}
+
+function normalizeMbti(value) {
+  const text = String(value || "").toUpperCase().replace(/[^A-Z]/g, "");
+  if (/^[EI][NS][FT][JP]$/.test(text)) return text;
+  const m = text.match(/[EI][NS][FT][JP]/);
+  return m ? m[0] : "";
 }
 
 function normalizeInstinctVariant(value) {
