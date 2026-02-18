@@ -299,6 +299,54 @@ async function runGeneration(body, env, hooks = {}) {
     }
   }
 
+  // 无论 strictOutput 是否开启，都强制检查MBTI+九型是否出现；缺失则进行定向补写。
+  if (!/(MBTI|迈尔斯|十六型)/.test(content) || !/(九型|Enneagram|\bw\d\b)/i.test(content)) {
+    mark("personality_fields_missing");
+    const patchPrompt = [
+      "请仅修补‘男主完整档案’段落，确保明确出现MBTI与九型人格（可含翼型）。",
+      "要求：",
+      "- 保持其余段落与结构不变。",
+      "- 不要新增解释，不要删减已有关键设定。",
+      "- 仅输出修补后的完整正文。",
+      "当前正文：",
+      content,
+    ].join("\n");
+
+    try {
+      const patchUpstream = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.2,
+            max_tokens: mode === "timeline" ? 2600 : 1800,
+            messages: [
+              { role: "system", content: "你是文本定向修补器。仅输出修补后正文。" },
+              { role: "user", content: patchPrompt },
+            ],
+          }),
+        },
+        10000
+      );
+      if (patchUpstream.ok) {
+        const patchData = await patchUpstream.json();
+        const patched = sanitizeModelOutput(patchData?.choices?.[0]?.message?.content);
+        if (patched) {
+          content = patched;
+          repaired = true;
+          mark("personality_fields_patched");
+        }
+      }
+    } catch {
+      mark("personality_fields_patch_failed");
+    }
+  }
+
   if (strictOutput) {
     const check = validateOutput(content, mode);
     mark("output_validated", { ok: check.ok, missing: check.missing.length });
