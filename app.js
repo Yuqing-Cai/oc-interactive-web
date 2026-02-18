@@ -240,10 +240,12 @@ async function generate(isRegenerate) {
   const streamUrl = apiUrl.replace(/\/generate$/, "/generate-stream");
   const model = FIXED_MODEL;
   const extraPrompt = extraPromptInput.value.trim();
-  const selections = getSelected().map(({ axis, option }) => ({
+  const selections = getSelected().map(({ axis, option, code }) => ({
     axis,
     option,
+    code,
     detail: AXES[axis]?.options?.[option] || "",
+    longDetail: optionDetailMap.get(code) || PALETTE_LONG[code] || "",
     axisDesc: AXES[axis]?.desc || "",
   }));
   const mode = detectGenerateMode(selections);

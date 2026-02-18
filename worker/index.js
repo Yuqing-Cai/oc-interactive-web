@@ -126,8 +126,7 @@ async function runGeneration(body, env, hooks = {}) {
   mark("mode_decided", { mode });
 
   const systemPrompt = buildSystemPrompt(mode, strictOutput);
-  const synthesizedConstraints = [];
-  const userPrompt = buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints);
+  const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
   const payload = {
     model,
@@ -397,14 +396,20 @@ function buildSystemPrompt(mode, strictOutput = false) {
   ].join("\n");
 }
 
-function buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints = []) {
+function buildUserPrompt(selections, extraPrompt, mode) {
   return [
     `请基于以下已选轴要素，生成‘高完成度单版本男主设定’（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）：`,
-    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
+    selections
+      .map((s) => {
+        const long = String(s.longDetail || "").trim();
+        const detail = String(s.detail || "").trim();
+        const chunks = [`- ${s.axis}: ${s.option}`];
+        if (detail) chunks.push(`短释义：${detail}`);
+        if (long) chunks.push(`扩展说明：${long}`);
+        return chunks.join("｜");
+      })
+      .join("\n"),
     extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
-    synthesizedConstraints.length
-      ? `\n提炼出的硬约束（必须严格满足）：\n${synthesizedConstraints.map((x) => `- ${x}`).join("\n")}`
-      : "",
     "\n生成原则：先写出自然连贯的故事内核，再让轴作为边界约束中度映射。",
     "不要逐条把轴机械翻译成剧情句；避免‘拼装感/缝合感’。",
     "不要把轴选项名称直接抄成世界观实体名；除非用户明确要求，否则按语义隐喻处理。",
