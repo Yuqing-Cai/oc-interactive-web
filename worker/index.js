@@ -126,10 +126,56 @@ async function runGeneration(body, env, hooks = {}) {
   const systemPrompt = buildSystemPrompt(mode);
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
-  const payload = {
+  let finalModel = model;
+  const fallbackModel = (env.FALLBACK_MODEL || "").trim();
+
+  // Stage A: 先生成短骨架，锁定约束与方向。
+  const planPayload = {
     model,
-    temperature: 0.65,
-    max_tokens: mode === "timeline" ? 3600 : 2800,
+    temperature: 0.45,
+    max_tokens: 1800,
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "oc_plan", strict: true, schema: buildPlanSchema(mode) },
+    },
+    messages: [
+      { role: "system", content: "你是结构规划器。仅输出符合schema的短骨架JSON。" },
+      { role: "user", content: buildPlanUserPrompt(selections, extraPrompt, mode) },
+    ],
+  };
+
+  mark("plan_request_started", { model });
+  let planRes = await requestWithTransientRetries(apiUrl, apiKey, planPayload, { timeoutMs: 90000, retries: 1 });
+  if (!planRes.ok && isRetryableStatus(planRes.status) && fallbackModel) {
+    mark("upstream_retryable_error", { status: planRes.status, fallbackModel });
+    mark("fallback_request_started", { model: fallbackModel });
+    finalModel = fallbackModel;
+    planRes = await requestWithTransientRetries(apiUrl, apiKey, { ...planPayload, model: fallbackModel }, { timeoutMs: 50000, retries: 1 });
+    mark("fallback_response_received", { status: planRes.status });
+  }
+  if (!planRes.ok) {
+    const text = await planRes.text();
+    mark("upstream_error", { status: planRes.status });
+    const e = new Error(`Upstream error(${planRes.status}): ${text}`);
+    e.status = planRes.status;
+    throw e;
+  }
+
+  const planData = await planRes.json();
+  const planRaw = planData?.choices?.[0]?.message?.content;
+  const planParsed = parsePlanOutput(planRaw, mode);
+  if (!planParsed.ok) {
+    const e = new Error(`结构骨架生成失败：${planParsed.reason}`);
+    e.status = 502;
+    throw e;
+  }
+  mark("plan_response_received");
+
+  // Stage B: 基于骨架扩写高质量正文JSON。
+  const payload = {
+    model: finalModel,
+    temperature: 0.62,
+    max_tokens: mode === "timeline" ? 3400 : 2700,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -140,35 +186,12 @@ async function runGeneration(body, env, hooks = {}) {
     },
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
+      { role: "user", content: buildExpansionUserPrompt(selections, extraPrompt, mode, planParsed.value) },
     ],
   };
 
-  let upstream;
-  let finalModel = model;
-  const fallbackModel = (env.FALLBACK_MODEL || "").trim();
-
-  mark("upstream_request_started", { model });
-  upstream = await requestWithTransientRetries(
-    apiUrl,
-    apiKey,
-    payload,
-    { timeoutMs: 120000, retries: 1 }
-  );
-
-  if (!upstream.ok && isRetryableStatus(upstream.status) && fallbackModel) {
-    mark("upstream_retryable_error", { status: upstream.status, fallbackModel });
-    mark("fallback_request_started", { model: fallbackModel });
-    finalModel = fallbackModel;
-    upstream = await requestWithTransientRetries(
-      apiUrl,
-      apiKey,
-      { ...payload, model: fallbackModel, temperature: 0.55, max_tokens: Math.min(payload.max_tokens, 2800) },
-      { timeoutMs: 32000, retries: 1 }
-    );
-    mark("fallback_response_received", { status: upstream.status });
-  }
-
+  mark("upstream_request_started", { model: finalModel });
+  let upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: 120000, retries: 1 });
   if (!upstream.ok) {
     const text = await upstream.text();
     mark("upstream_error", { status: upstream.status });
@@ -179,19 +202,7 @@ async function runGeneration(body, env, hooks = {}) {
 
   mark("upstream_response_received");
   const data = await upstream.json();
-  const finishReason = data?.choices?.[0]?.finish_reason;
   let rawContent = data?.choices?.[0]?.message?.content;
-
-  if (finishReason === "length") {
-    mark("upstream_truncated_retry");
-    const retryPayload = { ...payload, temperature: 0.45, max_tokens: Math.min(payload.max_tokens, mode === "timeline" ? 3200 : 2400) };
-    const retryRes = await requestWithTransientRetries(apiUrl, apiKey, retryPayload, { timeoutMs: 40000, retries: 1 });
-    if (retryRes.ok) {
-      const retryData = await retryRes.json();
-      rawContent = retryData?.choices?.[0]?.message?.content || rawContent;
-    }
-  }
-
   if (!rawContent) {
     const e = new Error("No content in model response.");
     e.status = 502;
@@ -202,15 +213,27 @@ async function runGeneration(body, env, hooks = {}) {
   let structured = parseStructuredOutput(rawContent, mode);
   if (!structured.ok) {
     mark("structured_parse_failed", { reason: structured.reason });
-    const coerced = await coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode);
+    const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
     if (coerced) {
       structured = { ok: true, value: coerced };
       repaired = true;
       mark("structured_parse_recovered");
     } else {
-      const e = new Error(`结构化输出校验失败：${structured.reason}`);
-      e.status = 502;
-      throw e;
+      const retryRes = await requestWithTransientRetries(apiUrl, apiKey, { ...payload, temperature: 0.4, max_tokens: mode === "timeline" ? 3000 : 2300 }, { timeoutMs: 90000, retries: 0 });
+      if (retryRes.ok) {
+        const retryData = await retryRes.json();
+        const retried = parseStructuredOutput(retryData?.choices?.[0]?.message?.content, mode);
+        if (retried.ok) {
+          structured = retried;
+          repaired = true;
+          mark("structured_parse_recovered");
+        }
+      }
+      if (!structured.ok) {
+        const e = new Error(`结构化输出校验失败：${structured.reason}`);
+        e.status = 502;
+        throw e;
+      }
     }
   }
 
@@ -339,14 +362,76 @@ function buildUserPrompt(selections, extraPrompt, mode) {
       })
       .join("\n"),
     extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
-    "\n生成原则：先写出自然连贯的故事内核，再让轴作为边界约束中度映射。",
-    "不要逐条把轴机械翻译成剧情句；避免‘拼装感/缝合感’。",
-    "不要把轴选项名称直接抄成世界观实体名；除非用户明确要求，否则按语义隐喻处理。",
-    "‘矛盾度与取舍说明’和‘下次重生成建议’仅在确有必要时展开；若本次组合本身自洽，可用简短占位语句。",
-    "请在最终输出前做一次整体自检：确保与提炼硬约束一致，不一致则先改写后输出。",
-    "男主完整档案内的人格字段必须完整：MBTI、九型人格、副型（sp/sx/so之一主副组合）。",
-    "提醒：输出中可说明‘这是所有可能性中的一种实现’，但正文必须完整具体。"
   ].join("\n");
+}
+
+function buildPlanUserPrompt(selections, extraPrompt, mode) {
+  return [
+    `先生成结构骨架（模式：${mode}），只输出短摘要JSON，不写长文。`,
+    buildUserPrompt(selections, extraPrompt, mode),
+    "硬约束：中等强度映射（不能缝合怪，也不能无视选轴乱写）。",
+    "硬约束：MC不得命名；男主背景必须有过去→现在成因链。",
+  ].join("\n");
+}
+
+function buildExpansionUserPrompt(selections, extraPrompt, mode, plan) {
+  return [
+    `请把以下骨架扩写为高质量完整JSON（模式：${mode}）。`,
+    "要求：保留骨架方向与硬约束，提升细节、文风、可读性。",
+    "要求：中等强度映射，不机械拼轴，不可偏离选轴。",
+    buildUserPrompt(selections, extraPrompt, mode),
+    "骨架JSON：",
+    JSON.stringify(plan),
+  ].join("\n");
+}
+
+function buildPlanSchema(mode) {
+  const timelineProps = mode === "timeline"
+    ? { timeline_outline: { type: "string", minLength: 100 }, ending_outline: { type: "string", minLength: 80 } }
+    : {};
+  const timelineReq = mode === "timeline" ? ["timeline_outline", "ending_outline"] : [];
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      core_premise: { type: "string", minLength: 80 },
+      male_profile: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          mbti: { type: "string", pattern: "^[EI][NS][FT][JP]$" },
+          enneagram: { type: "string", minLength: 2 },
+          instinctual_variant: { type: "string", minLength: 2 },
+          background_outline: { type: "string", minLength: 120 },
+        },
+        required: ["mbti", "enneagram", "instinctual_variant", "background_outline"],
+      },
+      mc_boundary: { type: "string", minLength: 20 },
+      axis_mapping: { type: "array", minItems: 4, maxItems: 8, items: { type: "string", minLength: 8 } },
+      ...timelineProps,
+    },
+    required: ["core_premise", "male_profile", "mc_boundary", "axis_mapping", ...timelineReq],
+  };
+}
+
+function parsePlanOutput(raw, mode) {
+  const normalized = normalizeJsonLikeContent(raw);
+  let obj;
+  try {
+    obj = typeof normalized === "string" ? JSON.parse(normalized) : normalized;
+  } catch {
+    return { ok: false, reason: "JSON 解析失败" };
+  }
+  if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
+  if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
+  if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
+  if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
+  const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant);
+  if (!iv) return { ok: false, reason: "副型非法" };
+  obj.male_profile.instinctual_variant = iv;
+  if (mode === "timeline" && !String(obj.timeline_outline || "").trim()) return { ok: false, reason: "缺少时间线骨架" };
+  return { ok: true, value: obj };
 }
 
 function buildAlignmentCheckPrompt(structured, selections, extraPrompt, mode) {
