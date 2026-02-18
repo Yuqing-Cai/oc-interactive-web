@@ -653,7 +653,35 @@ function parseStructuredOutput(raw, mode) {
   if (!iv) return { ok: false, reason: "副型非法" };
   obj.male_profile.instinctual_variant = iv;
 
-  if (mode === "timeline" && !String(obj.timeline || "").trim()) return { ok: false, reason: "缺少三幕时间线" };
+  const requiredTextFields = [
+    ["overview", 80],
+    ["world_slice", 80],
+    ["mc_intel", 60],
+    ["relationship_dynamics", 60],
+    ["tradeoff_notes", 10],
+    ["regen_suggestion", 8],
+    ["opening_scene", 120],
+  ];
+
+  for (const [key, minLen] of requiredTextFields) {
+    if (typeof obj[key] !== "string" || obj[key].trim().length < minLen) {
+      return { ok: false, reason: `${key} 字段无效` };
+    }
+  }
+
+  if (typeof obj.male_profile.profile_body !== "string" || obj.male_profile.profile_body.trim().length < 300) {
+    return { ok: false, reason: "profile_body 字段无效" };
+  }
+
+  if (!Array.isArray(obj.axis_mapping) || obj.axis_mapping.length < 3 || obj.axis_mapping.some((x) => typeof x !== "string" || !x.trim())) {
+    return { ok: false, reason: "axis_mapping 字段无效" };
+  }
+
+  if (mode === "timeline") {
+    if (typeof obj.timeline !== "string" || obj.timeline.trim().length < 100) return { ok: false, reason: "timeline 字段无效" };
+    if (typeof obj.ending_payoff !== "string" || obj.ending_payoff.trim().length < 60) return { ok: false, reason: "ending_payoff 字段无效" };
+  }
+
   return { ok: true, value: obj };
 }
 
