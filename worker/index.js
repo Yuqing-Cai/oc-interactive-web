@@ -223,12 +223,25 @@ async function runGeneration(body, env, hooks = {}) {
   if (!structured.ok) {
     mark("structured_parse_failed", { reason: structured.reason });
 
+    // 先尝试把“编号段落文本”回填为结构对象（模型偶发返回成稿而非JSON）。
+    const narrativeObj = tryParseNarrativeOutput(rawContent, mode, planParsed.value);
+    if (narrativeObj) {
+      const parsedNarrative = parseStructuredOutput(narrativeObj, mode);
+      if (parsedNarrative.ok) {
+        structured = parsedNarrative;
+        repaired = true;
+        mark("structured_narrative_recovered");
+      }
+    }
+
     // 优先从骨架重建，避免在坏原文上反复修补导致长耗时。
-    const rebuilt = await rebuildFromPlan(apiUrl, apiKey, finalModel, mode, planParsed.value, selections, extraPrompt);
-    if (rebuilt) {
-      structured = { ok: true, value: rebuilt };
-      repaired = true;
-      mark("structured_rebuilt_from_plan");
+    if (!structured.ok) {
+      const rebuilt = await rebuildFromPlan(apiUrl, apiKey, finalModel, mode, planParsed.value, selections, extraPrompt);
+      if (rebuilt) {
+        structured = { ok: true, value: rebuilt };
+        repaired = true;
+        mark("structured_rebuilt_from_plan");
+      }
     }
 
     // 若骨架重建也失败，再做一次短时JSON修复兜底。
@@ -689,6 +702,58 @@ function parseStructuredOutput(raw, mode) {
   }
 
   return { ok: true, value: obj };
+}
+
+function tryParseNarrativeOutput(raw, mode, plan) {
+  const text = String(raw || "");
+  if (!text.trim()) return null;
+  if (!/1\)\s*设定总览/.test(text)) return null;
+
+  const pick = (n, next) => {
+    const re = new RegExp(`${n}\\)\\s*[\\s\\S]*?\\n([\\s\\S]*?)${next ? `\\n${next}\\)` : "$"}`);
+    const m = text.match(re);
+    return (m?.[1] || "").trim();
+  };
+
+  const overview = pick(1, 2);
+  const profile = pick(2, 3);
+  const world = pick(3, 4);
+  const mcIntel = pick(4, 5);
+  const relation = pick(5, 6);
+  const mappingBlock = mode === "timeline" ? pick(8, 9) : pick(6, 7);
+  const tradeoff = mode === "timeline" ? pick(9, 10) : pick(7, 8);
+  const regen = mode === "timeline" ? pick(10, 11) : pick(8, 9);
+  const opening = mode === "timeline" ? pick(11, null) : pick(9, null);
+  const timeline = mode === "timeline" ? pick(6, 7) : "";
+  const ending = mode === "timeline" ? pick(7, 8) : "";
+
+  const mbti = normalizeMbti(profile.match(/MBTI\s*[：:]\s*([A-Za-z]{4})/i)?.[1] || plan?.male_profile?.mbti);
+  const enneagram = profile.match(/九型人格\s*[：:]\s*([^\n]+)/)?.[1]?.trim() || plan?.male_profile?.enneagram || "5w4";
+  const instinct = normalizeInstinctVariant(profile.match(/副型\s*[：:]\s*([^\n]+)/)?.[1] || plan?.male_profile?.instinctual_variant);
+  const profileBody = profile.replace(/MBTI\s*[：:].*$/gim, "").replace(/九型人格\s*[：:].*$/gim, "").replace(/副型\s*[：:].*$/gim, "").trim();
+
+  const axisMapping = mappingBlock
+    .split("\n")
+    .map((x) => x.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+
+  return {
+    overview,
+    male_profile: {
+      mbti: mbti || "INTJ",
+      enneagram,
+      instinctual_variant: instinct || "sp/sx",
+      profile_body: profileBody,
+    },
+    world_slice: world,
+    mc_intel: mcIntel,
+    relationship_dynamics: relation,
+    axis_mapping: axisMapping,
+    tradeoff_notes: tradeoff,
+    regen_suggestion: regen,
+    opening_scene: opening,
+    ...(mode === "timeline" ? { timeline, ending_payoff: ending } : {}),
+  };
 }
 
 function normalizeTextField(value) {
