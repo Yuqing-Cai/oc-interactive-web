@@ -395,6 +395,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     plan_response_received: "骨架生成完成",
     plan_parse_failed: "骨架解析失败，正在修复",
     plan_parse_recovered: "骨架修复成功",
+    plan_bypassed: "骨架阶段失败，已切换后备骨架继续生成",
     upstream_request_started: "正文扩写中",
     upstream_timeout: "主模型超时，尝试降级",
     upstream_retryable_error: "主模型临时错误，尝试降级",

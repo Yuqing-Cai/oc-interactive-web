@@ -173,9 +173,10 @@ async function runGeneration(body, env, hooks = {}) {
       repaired = true;
       mark("plan_parse_recovered");
     } else {
-      const e = new Error(`结构骨架生成失败：${planParsed.reason}`);
-      e.status = 502;
-      throw e;
+      // 兜底：骨架阶段失败时不直接报错，回退为“由选轴构造最小骨架”继续扩写。
+      planParsed = { ok: true, value: buildFallbackPlan(selections, extraPrompt, mode) };
+      repaired = true;
+      mark("plan_bypassed");
     }
   }
   mark("plan_response_received");
@@ -391,6 +392,25 @@ function buildExpansionUserPrompt(selections, extraPrompt, mode, plan) {
     "骨架JSON：",
     JSON.stringify(plan),
   ].join("\n");
+}
+
+function buildFallbackPlan(selections, extraPrompt, mode) {
+  const list = Array.isArray(selections) ? selections : [];
+  const axisLines = list.map((s) => `${s.axis}:${s.option}`).join("；");
+  return {
+    core_premise: `基于选轴生成，强调中等强度映射：${axisLines}`.slice(0, 220),
+    male_profile: {
+      mbti: "INTJ",
+      enneagram: "5w4",
+      instinctual_variant: "sp/sx",
+      background_outline: `男主背景需完整详写（过去→现在），并落实补充约束：${String(extraPrompt || "无")}`.slice(0, 260),
+    },
+    mc_boundary: "MC不命名；除开场片段外称‘她’，开场片段用‘我’。",
+    axis_mapping: list.slice(0, 6).map((s) => `围绕${s.axis}轴(${s.option})进行中等强度映射，避免缝合与跑偏。`),
+    ...(mode === "timeline"
+      ? { timeline_outline: "三幕推进：起势-失衡-兑现，代价与终局对齐。", ending_outline: "终局需与F/X/T/G相关轴语义一致。" }
+      : {}),
+  };
 }
 
 function buildPlanSchema(mode) {
