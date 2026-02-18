@@ -111,8 +111,6 @@ async function runGeneration(body, env, hooks = {}) {
     throw e;
   }
 
-  const strictOutput = String(env.STRICT_OUTPUT || "false").toLowerCase() === "true";
-
   const trace = [];
   const startedAt = Date.now();
   const mark = (stage, extra = {}) => {
@@ -125,7 +123,7 @@ async function runGeneration(body, env, hooks = {}) {
   const mode = detectMode(selections);
   mark("mode_decided", { mode });
 
-  const systemPrompt = buildSystemPrompt(mode, strictOutput);
+  const systemPrompt = buildSystemPrompt(mode);
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
   const payload = {
@@ -202,8 +200,6 @@ async function runGeneration(body, env, hooks = {}) {
   mark("upstream_response_received");
   const data = await upstream.json();
   const rawContent = data?.choices?.[0]?.message?.content;
-  let content = "";
-  let repaired = false;
 
   if (!rawContent) {
     const e = new Error("No content in model response.");
@@ -211,66 +207,51 @@ async function runGeneration(body, env, hooks = {}) {
     throw e;
   }
 
-  const structured = parseStructuredOutput(rawContent, mode);
+  let structured = parseStructuredOutput(rawContent, mode);
   if (!structured.ok) {
     const e = new Error(`结构化输出校验失败：${structured.reason}`);
     e.status = 502;
     throw e;
   }
 
-  content = renderStructuredMarkdown(structured.value, mode);
+  const maxAlignRounds = Math.max(1, Number(env.ALIGNMENT_MAX_ROUNDS || 3));
+  let repaired = false;
+  let alignPass = false;
+  let lastIssues = [];
 
-  if (strictOutput) {
-    const check = validateOutput(content, mode);
-    mark("output_validated", { ok: check.ok, missing: check.missing.length });
-
-    if (!check.ok) {
-      const repairPrompt = buildRepairPrompt(content, check.missing, mode);
-      mark("repair_started");
-      const repairUpstream = await fetchWithTimeout(
-        apiUrl,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            temperature: 0.6,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "你是文本修复器。仅输出最终成稿，不要解释修复过程，不要输出任何注释、前言、后记、思考过程。",
-              },
-              { role: "user", content: repairPrompt },
-            ],
-          }),
-        },
-        12000
-      );
-
-      if (repairUpstream.ok) {
-        const repairData = await repairUpstream.json();
-        const repairedContent = sanitizeModelOutput(repairData?.choices?.[0]?.message?.content);
-        if (repairedContent) {
-          content = repairedContent;
-          repaired = true;
-          mark("repair_applied");
-        } else {
-          mark("repair_empty");
-        }
-      } else {
-        mark("repair_failed", { status: repairUpstream.status });
-      }
-    } else {
-      mark("repair_skipped");
+  for (let round = 1; round <= maxAlignRounds; round++) {
+    mark("alignment_check_started", { round, maxAlignRounds });
+    const check = await runAlignmentCheck(apiUrl, apiKey, model, structured.value, selections, extraPrompt, mode);
+    if (check.pass) {
+      alignPass = true;
+      mark("alignment_check_passed", { round });
+      break;
     }
-  } else {
-    // 非严格模式下不展示结构校验噪声阶段，减少系统状态冗余。
+
+    lastIssues = check.issues;
+    mark("alignment_check_failed", { round, issues: check.issues.length });
+
+    if (round >= maxAlignRounds) break;
+
+    mark("alignment_repair_started", { round: round + 1 });
+    const repairedObj = await regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPrompt, structured.value, check.issues, mode);
+    if (!repairedObj) {
+      mark("alignment_repair_failed", { round: round + 1 });
+      continue;
+    }
+
+    structured = { ok: true, value: repairedObj };
+    repaired = true;
+    mark("alignment_repair_applied", { round: round + 1 });
   }
 
+  if (!alignPass) {
+    const e = new Error(`生成内容与选轴/补充提示词不一致：${lastIssues.slice(0, 3).join("；") || "请重试"}`);
+    e.status = 502;
+    throw e;
+  }
+
+  const content = renderStructuredMarkdown(structured.value, mode);
   mark("completed", { repaired });
   return {
     content,
@@ -311,7 +292,7 @@ function detectMode(selections) {
   return axes.has("F") || axes.has("X") || axes.has("T") || axes.has("G") ? "timeline" : "opening";
 }
 
-function buildSystemPrompt(mode, strictOutput = false) {
+function buildSystemPrompt(mode) {
   const common = [
     "你是‘OC男主设定总设计师’。",
     "你必须返回符合 JSON Schema 的对象，不得输出 markdown、解释或额外文本。",
@@ -364,9 +345,7 @@ function buildSystemPrompt(mode, strictOutput = false) {
       "   - 开场片段必须使用MC第一人称（我），并出现可感知的动作、环境细节与当下冲突。",
       "   - 禁止在开场片段中给MC命名。",
       "",
-      strictOutput
-        ? "最低信息密度要求：总字数建议 1600~2400 中文字。"
-        : "信息密度要求：优先保证可读与速度，总字数建议 900~1400 中文字。",
+      "信息密度要求：优先保证可读与速度，总字数建议 900~1400 中文字。",
     ].join("\n");
   }
 
@@ -390,9 +369,7 @@ function buildSystemPrompt(mode, strictOutput = false) {
     "   - 开场片段必须使用MC第一人称（我），并出现可感知的动作、环境细节与当下冲突。",
     "   - 禁止在开场片段中给MC命名。",
     "",
-    strictOutput
-      ? "最低信息密度要求：总字数建议 1400~2200 中文字。"
-      : "信息密度要求：优先保证可读与速度，总字数建议 800~1200 中文字。", 
+    "信息密度要求：优先保证可读与速度，总字数建议 800~1200 中文字。", 
   ].join("\n");
 }
 
@@ -420,58 +397,40 @@ function buildUserPrompt(selections, extraPrompt, mode) {
   ].join("\n");
 }
 
-function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode, synthesizedConstraints = []) {
+function buildAlignmentCheckPrompt(structured, selections, extraPrompt, mode) {
   return [
-    `请对下列初稿做“一致性修订”（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）。`,
-    "要求：仅输出修订后的最终正文，不要解释。",
-    "请执行‘先自检后输出’：若任一约束不满足，先修改再继续自检，直到通过。",
-    "最低必须满足：",
-    "- 所有已选轴、补充提示词、提炼硬约束不得被违背。",
-    "- 不得新增‘开场时刻场景锚点’章节。",
-    "- MC不得命名；除开场片段外称‘她’，开场片段用第一人称‘我’。",
-    "- 男主完整档案必须出现MBTI与九型人格（可含翼型），B1/B2/B3均不得省略。",
-    "- 男主完整档案中必须显式有两行字段：‘MBTI：...’与‘九型人格：...’。",
-    "- 男主完整档案必须是完整背景叙述并按身体类型自适应，不得是碎片字段清单。",
+    `你是设定对齐审稿器。请检查稿件是否严格跟随用户选轴与补充提示词（模式：${mode}）。`,
+    "返回 JSON：{\"pass\": boolean, \"issues\": string[]}。仅输出 JSON。",
+    "判定标准：",
+    "1) 是否明显违背已选轴语义（允许中度映射，但不能反向）。",
+    "2) 是否落实补充提示词中的硬约束。",
+    "3) MC是否被命名（开场片段也不允许给出姓名）。",
+    "4) 男主档案是否是详细背景而非简历条目。",
+    "5) MBTI / 九型人格 / 副型字段是否完整。",
+    "若任一失败，pass=false 并给出可执行问题列表。",
     "已选轴：",
-    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
+    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}${s.longDetail ? `｜扩展说明：${s.longDetail}` : ""}`).join("\n"),
     extraPrompt ? `补充提示词：${extraPrompt}` : "补充提示词：无",
-    synthesizedConstraints.length ? `提炼硬约束：\n${synthesizedConstraints.map((x) => `- ${x}`).join("\n")}` : "",
-    "初稿：",
-    draft,
+    "待审稿件(JSON对象)：",
+    JSON.stringify(structured),
   ].join("\n");
 }
 
-function buildConstraintSynthesisPrompt(selections, extraPrompt) {
-  return [
-    "请先理解用户所选轴的语义，再提炼必须满足的硬约束。",
-    "不要泛泛而谈；只保留会导致内容对错的约束。",
-    "已选轴：",
-    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
-    extraPrompt ? `补充提示词：${extraPrompt}` : "补充提示词：无",
-  ].join("\n");
-}
-
-function safeParseConstraintsJson(raw) {
-  const text = String(raw || "").trim();
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return [];
+function parseAlignmentResult(raw) {
   try {
+    const text = String(raw || "").trim();
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { pass: false, issues: ["审稿器未返回JSON"] };
     const obj = JSON.parse(m[0]);
-    const arr = Array.isArray(obj?.hard_constraints) ? obj.hard_constraints : [];
-    return arr.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12);
+    const pass = Boolean(obj?.pass);
+    const issues = Array.isArray(obj?.issues)
+      ? obj.issues.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 8)
+      : [];
+    return { pass, issues: pass ? [] : (issues.length ? issues : ["存在未说明的对齐问题"]) };
   } catch {
-    return [];
+    return { pass: false, issues: ["审稿器结果解析失败"] };
   }
 }
-
-function hasPersonalityFields(content = "") {
-  const text = String(content || "");
-  const hasMbti = /MBTI\s*[：:]\s*[EI][NS][FT][JP]/i.test(text);
-  const hasEnnea = /九型人格\s*[：:]\s*[^\n]+/i.test(text);
-  const hasInstinct = /副型\s*[：:]\s*(?:sp|sx|so)\/(?:sp|sx|so)/i.test(text);
-  return hasMbti && hasEnnea && hasInstinct;
-}
-
 function buildOutputSchema(mode) {
   const timelineProps = mode === "timeline"
     ? {
@@ -542,6 +501,85 @@ function parseStructuredOutput(raw, mode) {
   }
 }
 
+async function runAlignmentCheck(apiUrl, apiKey, model, structured, selections, extraPrompt, mode) {
+  const prompt = buildAlignmentCheckPrompt(structured, selections, extraPrompt, mode);
+  const res = await fetchWithTimeout(
+    apiUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        max_tokens: 800,
+        messages: [
+          { role: "system", content: "你是严格审稿器，只输出 JSON。" },
+          { role: "user", content: prompt },
+        ],
+      }),
+    },
+    22000
+  );
+
+  if (!res.ok) {
+    return { pass: false, issues: [`审稿器请求失败(${res.status})`] };
+  }
+
+  const data = await res.json();
+  const raw = data?.choices?.[0]?.message?.content || "";
+  return parseAlignmentResult(raw);
+}
+
+async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPrompt, previousObj, issues, mode) {
+  const res = await fetchWithTimeout(
+    apiUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.45,
+        max_tokens: mode === "timeline" ? 4200 : 3200,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "oc_profile",
+            strict: true,
+            schema: buildOutputSchema(mode),
+          },
+        },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+          { role: "assistant", content: JSON.stringify(previousObj) },
+          {
+            role: "user",
+            content: [
+              "上一个版本仍未通过对齐审稿，请在不破坏结构与信息密度前提下重写为新版本。",
+              "必须逐条修复以下问题：",
+              ...issues.map((x) => `- ${x}`),
+              "只输出符合同一 JSON Schema 的完整对象。",
+            ].join("\n"),
+          },
+        ],
+      }),
+    },
+    35000
+  );
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const raw = data?.choices?.[0]?.message?.content;
+  const parsed = parseStructuredOutput(raw, mode);
+  return parsed.ok ? parsed.value : null;
+}
+
 function renderStructuredMarkdown(obj, mode) {
   const lines = [
     "1) 设定总览（玩家上帝视角）",
@@ -600,103 +638,6 @@ function renderStructuredMarkdown(obj, mode) {
 
   lines.push(String(obj.opening_scene || "").trim());
   return lines.join("\n").trim();
-}
-
-function sanitizeModelOutput(text) {
-  if (!text || typeof text !== "string") return "";
-
-  return text
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/```(?:thinking|analysis)?[\s\S]*?```/gi, "")
-    .replace(/^\s*(思考过程|推理过程|Reasoning)[:：].*$/gim, "")
-    // 去掉模型偶发追加在最开头的总标题（用户不需要）
-    .replace(/^\s*#{1,6}\s*.+\n+/m, "")
-    .trim();
-}
-
-function validateOutput(content, mode) {
-  const requiredTitles =
-    mode === "timeline"
-      ? [
-          "1) 设定总览（玩家上帝视角）",
-          "2) 男主完整档案（玩家上帝视角）",
-          "3) 世界观与时代切片（玩家上帝视角）",
-          "4) MC视角情报（她知道 / 不知道）",
-          "5) 关系初始动力学（此刻已成立）",
-          "6) 三幕时间线骨架（细节留白）",
-          "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
-          "8) 选轴映射说明",
-          "9) 矛盾度与取舍说明",
-          "10) 下次重生成建议",
-          "11) 开场片段（250~450字，MC第一视角）",
-        ]
-      : [
-          "1) 设定总览（玩家上帝视角）",
-          "2) 男主完整档案（玩家上帝视角）",
-          "3) 世界观与时代切片（玩家上帝视角）",
-          "4) MC视角情报（她知道 / 不知道）",
-          "5) 关系初始动力学（此刻已成立）",
-          "6) 选轴映射说明",
-          "7) 矛盾度与取舍说明",
-          "8) 下次重生成建议",
-          "9) 开场片段（300~500字，MC第一视角）",
-        ];
-
-  const missing = requiredTitles.filter((t) => !content.includes(t));
-  const minLength = mode === "timeline" ? 1400 : 1200;
-  if (content.length < minLength) missing.push("【总字数不足，请补足信息密度】");
-  if (!/(MBTI|迈尔斯|十六型)/.test(content)) missing.push("【男主完整档案缺少MBTI】");
-  if (!/(九型|Enneagram|\bw\d\b)/i.test(content)) missing.push("【男主完整档案缺少九型人格】");
-
-  return { ok: missing.length === 0, missing };
-}
-
-function buildRepairPrompt(draft, missing, mode) {
-  return [
-    "下面是一份初稿，请你修复为最终版。",
-    `模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}`,
-    "要求：",
-    "- 保留已有可用内容，但补齐缺失结构与信息密度。",
-    "- 输出中禁止出现‘修复说明/补充说明/下面是/我已’等元话术。",
-    "- 只输出最终故事设定正文。",
-    "",
-    `缺失项：\n${missing.map((m) => `- ${m}`).join("\n")}`,
-    "",
-    "初稿：",
-    draft,
-  ].join("\n");
-}
-
-async function continueLongOutput(apiUrl, apiKey, model, systemPrompt, userPrompt, existingContent) {
-  const continuationUpstream = await fetchWithTimeout(
-    apiUrl,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.7,
-        max_tokens: 1800,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-          { role: "assistant", content: existingContent },
-          {
-            role: "user",
-            content: "上文因长度被截断。请从上文最后一句继续输出剩余内容，不要重复已写内容，不要重写标题结构。",
-          },
-        ],
-      }),
-    },
-    40000
-  );
-
-  if (!continuationUpstream.ok) return "";
-  const continuationData = await continuationUpstream.json();
-  return sanitizeModelOutput(continuationData?.choices?.[0]?.message?.content || "");
 }
 
 async function fetchWithTimeout(url, init, timeoutMs = 85000) {
