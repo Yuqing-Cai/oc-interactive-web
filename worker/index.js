@@ -129,7 +129,7 @@ async function runGeneration(body, env, hooks = {}) {
   const payload = {
     model,
     temperature: 0.65,
-    max_tokens: mode === "timeline" ? 4200 : 3200,
+    max_tokens: mode === "timeline" ? 3600 : 2800,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -153,7 +153,7 @@ async function runGeneration(body, env, hooks = {}) {
     apiUrl,
     apiKey,
     payload,
-    { timeoutMs: 0, retries: 2 }
+    { timeoutMs: 90000, retries: 1 }
   );
 
   if (!upstream.ok && isRetryableStatus(upstream.status) && fallbackModel) {
@@ -214,7 +214,7 @@ async function runGeneration(body, env, hooks = {}) {
     }
   }
 
-  const maxAlignRounds = Math.max(1, Number(env.ALIGNMENT_MAX_ROUNDS || 3));
+  const maxAlignRounds = Math.max(1, Number(env.ALIGNMENT_MAX_ROUNDS || 2));
   let alignPass = false;
   let lastIssues = [];
 
@@ -279,7 +279,7 @@ function mapError(err) {
       status: 504,
       code: "UPSTREAM_TIMEOUT",
       message:
-        "模型响应超时（已达到服务端等待上限）。通常是上游生成耗时过长或短时波动，不代表你的本地网络有问题。",
+        "模型响应超时（单次请求上限约90秒，已自动重试/降级）。通常是上游拥塞或当前提示过重；请重试或减少一次生成负载。",
     };
   }
 
@@ -619,7 +619,7 @@ async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPro
       body: JSON.stringify({
         model,
         temperature: 0.45,
-        max_tokens: mode === "timeline" ? 4200 : 3200,
+        max_tokens: mode === "timeline" ? 3400 : 2600,
         response_format: {
           type: "json_schema",
           json_schema: {
