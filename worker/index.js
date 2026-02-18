@@ -319,11 +319,18 @@ async function runGeneration(body, env, hooks = {}) {
       mark("personality_fields_patch_failed");
     }
 
-    // 兜底：若仍缺失，直接报错而不是输出不合格文稿。
+    // 本地兜底：若模型补写仍失败，则在“男主完整档案”段落强制补齐字段，避免整单报错。
     if (!hasPersonalityFields(content)) {
-      const e = new Error("生成结果缺少MBTI或九型人格（硬约束未满足）。请重试。");
-      e.status = 502;
-      throw e;
+      const forced = forceAddPersonalityFields(content);
+      if (forced && hasPersonalityFields(forced)) {
+        content = forced;
+        repaired = true;
+        mark("personality_fields_forced_local");
+      } else {
+        const e = new Error("生成结果缺少MBTI或九型人格（硬约束未满足）。请重试。");
+        e.status = 502;
+        throw e;
+      }
     }
   }
 
@@ -566,9 +573,57 @@ function safeParseConstraintsJson(raw) {
 
 function hasPersonalityFields(content = "") {
   const text = String(content || "");
-  const hasMbti = /(MBTI|迈尔斯|十六型|16型)/i.test(text);
-  const hasEnnea = /(九型|Enneagram|\bw\d\b)/i.test(text);
+  const hasMbti = /(MBTI|迈尔斯|十六型|16型|\b[EI][NS][FT][JP]\b)/i.test(text);
+  const hasEnnea = /(九型|Enneagram|\b[1-9]w[1-9]\b|\b[1-9]号\b|\b[1-9]型\b)/i.test(text);
   return hasMbti && hasEnnea;
+}
+
+function extractMbti(content = "") {
+  const text = String(content || "");
+  const direct = text.match(/MBTI\s*[：:]\s*([A-Za-z]{4})/i)?.[1];
+  if (direct) return direct.toUpperCase();
+  const code = text.match(/\b([EI][NS][FT][JP])\b/i)?.[1];
+  return code ? code.toUpperCase() : "INTJ";
+}
+
+function extractEnneagram(content = "") {
+  const text = String(content || "");
+  const direct = text.match(/(?:九型人格|九型|Enneagram)\s*[：:]\s*([^\n。；;]+)/i)?.[1]?.trim();
+  if (direct) return direct;
+  const wing = text.match(/\b([1-9]w[1-9])\b/i)?.[1];
+  if (wing) return wing.toLowerCase();
+  const typeNum = text.match(/\b([1-9])\s*(?:号|型)\b/)?.[1];
+  if (typeNum) return `${typeNum}号`;
+  return "5w4";
+}
+
+function forceAddPersonalityFields(content = "") {
+  const text = String(content || "").trim();
+  if (!text) return text;
+
+  let out = text;
+  const mbtiLine = /(?:^|\n)\s*MBTI\s*[：:]/i;
+  const enneaLine = /(?:^|\n)\s*九型人格\s*[：:]/i;
+  const missingMbti = !mbtiLine.test(out);
+  const missingEnnea = !enneaLine.test(out);
+  if (!missingMbti && !missingEnnea) return out;
+
+  const mbti = extractMbti(out);
+  const ennea = extractEnneagram(out);
+  const lines = [];
+  if (missingMbti) lines.push(`MBTI：${mbti}`);
+  if (missingEnnea) lines.push(`九型人格：${ennea}`);
+  const injection = lines.join("\n");
+
+  const profileHeadRe = /(\n|^)(2\)\s*男主完整档案[^\n]*\n?)/;
+  const m = out.match(profileHeadRe);
+  if (m) {
+    const idx = m.index + m[0].length;
+    out = `${out.slice(0, idx)}${injection}\n${out.slice(idx)}`;
+  } else {
+    out = `${injection}\n${out}`;
+  }
+  return out;
 }
 
 function sanitizeModelOutput(text) {

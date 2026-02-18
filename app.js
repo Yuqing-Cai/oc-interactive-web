@@ -408,6 +408,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     personality_fields_missing: "检测到缺少MBTI/九型，启动定向修补",
     personality_fields_patched: "MBTI/九型已补齐",
     personality_fields_patch_failed: "MBTI/九型补写失败",
+    personality_fields_forced_local: "MBTI/九型已本地兜底补齐",
     upstream_error: "模型请求失败",
     completed: "生成流程完成",
   };
