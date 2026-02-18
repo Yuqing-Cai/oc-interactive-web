@@ -635,16 +635,24 @@ function renderResultContent(text = "") {
       if (!line.trim()) return `<div class="result-line result-blank"></div>`;
 
       if (/^\d+\)\s+/.test(line)) {
-        return `<h4 class="result-title">${escapeHtml(line)}</h4>`;
+        return `<h4 class="result-title">${renderInlineMarkdown(line)}</h4>`;
       }
 
       if (/^-\s+/.test(line)) {
-        return `<div class="result-line result-bullet">${escapeHtml(line)}</div>`;
+        return `<div class="result-line result-bullet">${renderInlineMarkdown(line)}</div>`;
       }
 
-      return `<div class="result-line">${escapeHtml(line)}</div>`;
+      return `<div class="result-line">${renderInlineMarkdown(line)}</div>`;
     })
     .join("");
+}
+
+function renderInlineMarkdown(input = "") {
+  const escaped = escapeHtml(input);
+  return escaped
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`(.+?)`/g, "<code>$1</code>");
 }
 
 function escapeHtml(str = "") {
