@@ -130,7 +130,8 @@ async function runGeneration(body, env, hooks = {}) {
 
   const payload = {
     model,
-    temperature: 0.9,
+    temperature: 0.8,
+    max_tokens: mode === "timeline" ? 2600 : 1800,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -205,41 +206,51 @@ async function runGeneration(body, env, hooks = {}) {
 
   // 统一做一次“语义一致性回读修订”：不靠枚举正则，而是让模型按选轴+补充提示进行整体一致性修订。
   const consistencyPrompt = buildConsistencyPassPrompt(content, selections, extraPrompt, mode);
-  const consistencyUpstream = await fetchWithTimeout(
-    apiUrl,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+  // 一致性修订是“优化项”，不能因为它超时导致整单失败。
+  try {
+    const consistencyUpstream = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          max_tokens: mode === "timeline" ? 2200 : 1500,
+          messages: [
+            {
+              role: "system",
+              content: "你是文本一致性修订器。仅输出修订后的最终正文，不解释。",
+            },
+            { role: "user", content: consistencyPrompt },
+          ],
+        }),
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          {
-            role: "system",
-            content: "你是文本一致性修订器。仅输出修订后的最终正文，不解释。",
-          },
-          { role: "user", content: consistencyPrompt },
-        ],
-      }),
-    },
-    15000
-  );
+      8000
+    );
 
-  if (consistencyUpstream.ok) {
-    const consistencyData = await consistencyUpstream.json();
-    const revised = sanitizeModelOutput(consistencyData?.choices?.[0]?.message?.content);
-    if (revised) {
-      content = revised;
-      repaired = true;
-      mark("consistency_pass_applied");
+    if (consistencyUpstream.ok) {
+      const consistencyData = await consistencyUpstream.json();
+      const revised = sanitizeModelOutput(consistencyData?.choices?.[0]?.message?.content);
+      if (revised) {
+        content = revised;
+        repaired = true;
+        mark("consistency_pass_applied");
+      } else {
+        mark("consistency_pass_empty");
+      }
     } else {
-      mark("consistency_pass_empty");
+      mark("consistency_pass_failed", { status: consistencyUpstream.status });
     }
-  } else {
-    mark("consistency_pass_failed", { status: consistencyUpstream.status });
+  } catch (err) {
+    if (err?.name === "TimeoutError") {
+      mark("consistency_pass_timeout_skipped");
+    } else {
+      mark("consistency_pass_error_skipped", { message: err?.message || "unknown" });
+    }
   }
 
   if (strictOutput) {
