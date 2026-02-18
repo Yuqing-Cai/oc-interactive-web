@@ -495,11 +495,41 @@ function parseStructuredOutput(raw, mode) {
 
   if (!obj || typeof obj !== "object") return { ok: false, reason: "响应不是对象" };
   if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
-  if (!/^[EI][NS][FT][JP]$/i.test(String(obj.male_profile.mbti || ""))) return { ok: false, reason: "MBTI 非法" };
+
+  const mbti = String(obj.male_profile.mbti || "").trim().toUpperCase();
+  if (!/^[EI][NS][FT][JP]$/.test(mbti)) return { ok: false, reason: "MBTI 非法" };
+  obj.male_profile.mbti = mbti;
+
   if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
-  if (!/^(sp|sx|so)\/(sp|sx|so)$/i.test(String(obj.male_profile.instinctual_variant || ""))) return { ok: false, reason: "副型非法" };
+
+  const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant);
+  if (!iv) return { ok: false, reason: "副型非法" };
+  obj.male_profile.instinctual_variant = iv;
+
   if (mode === "timeline" && !String(obj.timeline || "").trim()) return { ok: false, reason: "缺少三幕时间线" };
   return { ok: true, value: obj };
+}
+
+function normalizeInstinctVariant(value) {
+  const text = String(value || "").toLowerCase().trim();
+  if (!text) return "";
+
+  const canonical = text
+    .replace(/\s+/g, "")
+    .replace(/[—–-]+/g, "/")
+    .replace(/自保/g, "sp")
+    .replace(/亲密|一对一/g, "sx")
+    .replace(/社交/g, "so")
+    .replace(/型|副型|本能/g, "");
+
+  if (/^(sp|sx|so)\/(sp|sx|so)$/.test(canonical)) return canonical;
+  if (/^(sp|sx|so)(sp|sx|so)$/.test(canonical)) return `${canonical.slice(0,2)}/${canonical.slice(2,4)}`;
+  if (/^(sp|sx|so)$/.test(canonical)) return `${canonical}/sx`;
+
+  const found = canonical.match(/sp|sx|so/g) || [];
+  if (found.length >= 2) return `${found[0]}/${found[1]}`;
+  if (found.length === 1) return `${found[0]}/sx`;
+  return "";
 }
 
 function normalizeJsonLikeContent(raw) {
