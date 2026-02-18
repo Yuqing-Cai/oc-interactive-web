@@ -530,8 +530,8 @@ function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode, synthe
     "- 不得新增‘开场时刻场景锚点’章节。",
     "- MC不得命名；除开场片段外称‘她’，开场片段用第一人称‘我’。",
     "- 男主完整档案必须出现MBTI与九型人格（可含翼型），B1/B2/B3均不得省略。",
-    "- 男主完整档案中必须显式有两行字段：‘MBTI：...’与‘九型人格：...’。"
-    "- 男主完整档案必须是完整背景叙述并按身体类型自适应，不得是碎片字段清单。",
+    "- 男主完整档案中必须显式有两行字段：‘MBTI：...’与‘九型人格：...’。",
+    "- 男主完整档案必须是完整背景叙述并按身体类型自适应，不得是碎片字段清单。"
     "已选轴：",
     selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
     extraPrompt ? `补充提示词：${extraPrompt}` : "补充提示词：无",
