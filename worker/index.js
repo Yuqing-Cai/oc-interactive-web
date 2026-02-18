@@ -126,12 +126,58 @@ async function runGeneration(body, env, hooks = {}) {
   mark("mode_decided", { mode });
 
   const systemPrompt = buildSystemPrompt(mode, strictOutput);
-  const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
+
+  // Step 1/2：先让模型基于选轴+补充提示词提炼“硬约束”，再进入正文生成。
+  let synthesizedConstraints = [];
+  try {
+    mark("constraint_synthesis_started");
+    const synthUpstream = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.1,
+          max_tokens: 420,
+          messages: [
+            {
+              role: "system",
+              content:
+                "你是约束提炼器。根据选轴和补充提示词，只提炼必须被满足的硬约束。仅输出JSON：{\"hard_constraints\":[\"...\"]}。不要输出其他内容。",
+            },
+            {
+              role: "user",
+              content: buildConstraintSynthesisPrompt(selections, extraPrompt),
+            },
+          ],
+        }),
+      },
+      9000
+    );
+
+    if (synthUpstream.ok) {
+      const synthData = await synthUpstream.json();
+      const raw = synthData?.choices?.[0]?.message?.content || "";
+      const parsed = safeParseConstraintsJson(raw);
+      synthesizedConstraints = parsed;
+      mark("constraint_synthesis_applied", { count: synthesizedConstraints.length });
+    } else {
+      mark("constraint_synthesis_failed", { status: synthUpstream.status });
+    }
+  } catch (err) {
+    mark("constraint_synthesis_skipped", { reason: err?.name || "error" });
+  }
+
+  const userPrompt = buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints);
 
   const payload = {
     model,
-    temperature: 0.8,
-    max_tokens: mode === "timeline" ? 2600 : 1800,
+    temperature: 0.85,
+    max_tokens: mode === "timeline" ? 3000 : 2200,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -205,7 +251,7 @@ async function runGeneration(body, env, hooks = {}) {
   let repaired = false;
 
   // 统一做一次“语义一致性回读修订”：不靠枚举正则，而是让模型按选轴+补充提示进行整体一致性修订。
-  const consistencyPrompt = buildConsistencyPassPrompt(content, selections, extraPrompt, mode);
+  const consistencyPrompt = buildConsistencyPassPrompt(content, selections, extraPrompt, mode, synthesizedConstraints);
   // 一致性修订是“优化项”，不能因为它超时导致整单失败。
   try {
     const consistencyUpstream = await fetchWithTimeout(
@@ -424,11 +470,14 @@ function buildSystemPrompt(mode, strictOutput = false) {
   ].join("\n");
 }
 
-function buildUserPrompt(selections, extraPrompt, mode) {
+function buildUserPrompt(selections, extraPrompt, mode, synthesizedConstraints = []) {
   return [
     `请基于以下已选轴要素，生成‘高完成度单版本男主设定’（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）：`,
-    selections.map((s) => `- ${s.axis}: ${s.option}`).join("\n"),
+    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
     extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
+    synthesizedConstraints.length
+      ? `\n提炼出的硬约束（必须严格满足）：\n${synthesizedConstraints.map((x) => `- ${x}`).join("\n")}`
+      : "",
     "\n生成原则：先写出自然连贯的故事内核，再让轴作为边界约束中度映射。",
     "不要逐条把轴机械翻译成剧情句；避免‘拼装感/缝合感’。",
     "不要把轴选项名称直接抄成世界观实体名；除非用户明确要求，否则按语义隐喻处理。",
@@ -439,7 +488,7 @@ function buildUserPrompt(selections, extraPrompt, mode) {
   ].join("\n");
 }
 
-function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode) {
+function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode, synthesizedConstraints = []) {
   return [
     `请对下列初稿做“一致性修订”（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）。`,
     "要求：仅输出修订后的最终正文，不要解释。",
@@ -449,11 +498,35 @@ function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode) {
     "- MC不得命名；除开场片段外称‘她’，开场片段用第一人称‘我’。",
     "- 若补充提示词写了‘处男/无情感经历’等硬限制，必须严格兑现，不得出现反例。",
     "已选轴：",
-    selections.map((s) => `- ${s.axis}: ${s.option}`).join("\n"),
+    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
     extraPrompt ? `补充提示词：${extraPrompt}` : "补充提示词：无",
+    synthesizedConstraints.length ? `提炼硬约束：\n${synthesizedConstraints.map((x) => `- ${x}`).join("\n")}` : "",
     "初稿：",
     draft,
   ].join("\n");
+}
+
+function buildConstraintSynthesisPrompt(selections, extraPrompt) {
+  return [
+    "请先理解用户所选轴的语义，再提炼必须满足的硬约束。",
+    "不要泛泛而谈；只保留会导致内容对错的约束。",
+    "已选轴：",
+    selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
+    extraPrompt ? `补充提示词：${extraPrompt}` : "补充提示词：无",
+  ].join("\n");
+}
+
+function safeParseConstraintsJson(raw) {
+  const text = String(raw || "").trim();
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return [];
+  try {
+    const obj = JSON.parse(m[0]);
+    const arr = Array.isArray(obj?.hard_constraints) ? obj.hard_constraints : [];
+    return arr.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12);
+  } catch {
+    return [];
+  }
 }
 
 function sanitizeModelOutput(text) {

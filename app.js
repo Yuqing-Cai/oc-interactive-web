@@ -240,7 +240,12 @@ async function generate(isRegenerate) {
   const streamUrl = apiUrl.replace(/\/generate$/, "/generate-stream");
   const model = FIXED_MODEL;
   const extraPrompt = extraPromptInput.value.trim();
-  const selections = getSelected().map(({ axis, option }) => ({ axis, option }));
+  const selections = getSelected().map(({ axis, option }) => ({
+    axis,
+    option,
+    detail: AXES[axis]?.options?.[option] || "",
+    axisDesc: AXES[axis]?.desc || "",
+  }));
   const mode = detectGenerateMode(selections);
 
   if (selections.length < 3) return setStatus("至少选择 3 项轴要素。", true);
