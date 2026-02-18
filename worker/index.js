@@ -402,7 +402,7 @@ function buildSystemPrompt(mode, strictOutput = false) {
     "段内叙述保持连贯，减少碎片化短句和过度分段。整体语气更像一篇连贯设定文，而非问卷报告。",
     "男主姓名不要使用高频言情网文常见姓氏（如顾、沈、傅、陆、霍、厉、薄、裴、谢、韩、苏等）；优先选择更少见但自然的中文姓氏。",
     "叙述禁止使用第一人称创作者口吻（如‘我保留了…’‘我建议…’）。统一使用客观表述，例如‘此处’、‘该设定’、‘故事中’。",
-    "男主完整档案中必须明确写出：MBTI 与 九型人格（可含翼型）。",
+    "男主完整档案中必须明确写出：MBTI 与 九型人格（可含翼型），该要求对B1/B2/B3全部生效，不得省略。"
     "男主完整档案必须是‘完整背景档案’，不能只写碎片字段。字段需按身体类型自适应：若为凡人（B1）强调成长/家庭来源、教育训练、职业变迁、资源网络与现实生活结构；若为非人/超越肉体（B2/B3）强调起源机制、存在形态、能力代价、与人类社会接口、稳定性与失控条件。无论何种类型，都必须包含亲密关系边界（与用户硬约束一致）和当前核心冲突。",
     "男主完整档案应以连续叙述为主，可带少量小标题；禁止仅用‘姓名/年龄/职业’式短条目堆砌。",
     "MC禁止命名：不要给MC起任何名字。除开场片段外统一称‘她’；开场片段中使用第一人称‘我’。",
@@ -501,6 +501,7 @@ function buildConsistencyPassPrompt(draft, selections, extraPrompt, mode, synthe
     "- 不得新增‘开场时刻场景锚点’章节。",
     "- MC不得命名；除开场片段外称‘她’，开场片段用第一人称‘我’。",
     "- 若补充提示词写了‘处男/无情感经历’等硬限制，必须严格兑现，不得出现反例。",
+    "- 男主完整档案必须明确出现MBTI与九型人格（可含翼型），B1/B2/B3均不得省略。",
     "- ‘男主完整档案’必须是完整背景叙述，并按身体类型自适应：B1写成长/教育/职业链条，B2/B3写起源机制/存在形态/能力代价/人类社会接口；不得是碎片字段清单。",
     "已选轴：",
     selections.map((s) => `- ${s.axis}: ${s.option}${s.detail ? `（${s.detail}）` : ""}`).join("\n"),
@@ -577,6 +578,8 @@ function validateOutput(content, mode) {
   const missing = requiredTitles.filter((t) => !content.includes(t));
   const minLength = mode === "timeline" ? 1400 : 1200;
   if (content.length < minLength) missing.push("【总字数不足，请补足信息密度】");
+  if (!/(MBTI|迈尔斯|十六型)/.test(content)) missing.push("【男主完整档案缺少MBTI】");
+  if (!/(九型|Enneagram|\bw\d\b)/i.test(content)) missing.push("【男主完整档案缺少九型人格】");
 
   return { ok: missing.length === 0, missing };
 }
