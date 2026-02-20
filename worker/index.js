@@ -204,15 +204,28 @@ async function runGeneration(body, env, hooks = {}) {
   let structured = parseStructuredOutput(rawContent, mode);
   if (!structured.ok) {
     mark("structured_parse_failed", { reason: structured.reason });
-    const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
-    if (coerced) {
-      structured = { ok: true, value: coerced };
-      repaired = true;
-      mark("structured_parse_recovered");
-    } else {
-      const e = new Error(`结构化输出校验失败：${structured.reason}`);
-      e.status = 502;
-      throw e;
+
+    const narrativeObj = tryParseNarrativeOutput(rawContent, mode, null);
+    if (narrativeObj) {
+      const parsedNarrative = parseStructuredOutput(narrativeObj, mode);
+      if (parsedNarrative.ok) {
+        structured = parsedNarrative;
+        repaired = true;
+        mark("structured_narrative_recovered");
+      }
+    }
+
+    if (!structured.ok) {
+      const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
+      if (coerced) {
+        structured = { ok: true, value: coerced };
+        repaired = true;
+        mark("structured_parse_recovered");
+      } else {
+        const e = new Error(`结构化输出校验失败：${structured.reason}`);
+        e.status = 502;
+        throw e;
+      }
     }
   }
 
@@ -680,7 +693,7 @@ async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
         ],
       }),
     },
-    22000
+    30000
   );
 
   if (!res.ok) return null;
