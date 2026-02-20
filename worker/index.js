@@ -229,33 +229,42 @@ async function runGeneration(body, env, hooks = {}) {
     }
   }
 
-  // 只做程序化对齐检查；必要时最多一次定点重写。
+  // 只做程序化对齐检查；先字段级本地修复，再考虑一次模型重写。
   mark("alignment_check_started", { round: 1, maxAlignRounds: 2, enableModelAudit: false });
   let issues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
   if (issues.length) {
     mark("alignment_rule_failed", { round: 1, issues: issues.length });
     mark("alignment_check_failed", { round: 1, issues: issues.length });
 
-    mark("alignment_repair_started", { round: 2 });
-    const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, userPrompt, structured.value, issues, mode);
-    if (!repairedObj) {
-      mark("alignment_repair_failed", { round: 2 });
-      const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
-      e.status = 502;
-      throw e;
-    }
+    const locallyPatched = repairStructuredFieldsLocally(structured.value, mode, selections);
+    const localIssues = checkProgrammaticAlignment(locallyPatched, selections, extraPrompt);
+    if (localIssues.length === 0) {
+      structured = { ok: true, value: locallyPatched };
+      repaired = true;
+      issues = [];
+      mark("alignment_local_repair_applied", { round: 1 });
+    } else {
+      mark("alignment_repair_started", { round: 2 });
+      const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, userPrompt, structured.value, issues, mode);
+      if (!repairedObj) {
+        mark("alignment_repair_failed", { round: 2 });
+        const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
+        e.status = 502;
+        throw e;
+      }
 
-    structured = { ok: true, value: repairedObj };
-    repaired = true;
-    mark("alignment_repair_applied", { round: 2 });
+      structured = { ok: true, value: repairedObj };
+      repaired = true;
+      mark("alignment_repair_applied", { round: 2 });
 
-    mark("alignment_check_started", { round: 2, maxAlignRounds: 2, enableModelAudit: false });
-    issues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
-    if (issues.length) {
-      mark("alignment_check_failed", { round: 2, issues: issues.length });
-      const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
-      e.status = 502;
-      throw e;
+      mark("alignment_check_started", { round: 2, maxAlignRounds: 2, enableModelAudit: false });
+      issues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
+      if (issues.length) {
+        mark("alignment_check_failed", { round: 2, issues: issues.length });
+        const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
+        e.status = 502;
+        throw e;
+      }
     }
   }
 
@@ -348,6 +357,45 @@ function buildUserPrompt(selections, extraPrompt, mode) {
 
 
 
+
+function repairStructuredFieldsLocally(obj, mode, selections = []) {
+  const safe = JSON.parse(JSON.stringify(obj || {}));
+  const scrubName = (s) => String(s || "").replace(/(她叫|名叫|名字是|MC叫|女主叫)[^，。；\n]*/g, "她");
+
+  safe.overview = scrubName(safe.overview || "");
+  safe.world_slice = scrubName(safe.world_slice || "");
+  safe.mc_intel = scrubName(safe.mc_intel || "");
+  safe.relationship_dynamics = scrubName(safe.relationship_dynamics || "");
+  safe.opening_scene = scrubName(safe.opening_scene || "");
+
+  safe.male_profile = safe.male_profile || {};
+  safe.male_profile.profile_body = scrubName(String(safe.male_profile.profile_body || ""));
+
+  if (safe.male_profile.profile_body.length < 520) {
+    const extra = [safe.overview, safe.world_slice, safe.relationship_dynamics].filter(Boolean).join("\n");
+    safe.male_profile.profile_body = `${safe.male_profile.profile_body}\n\n${extra}`.trim();
+  }
+
+  if (!Array.isArray(safe.axis_mapping)) safe.axis_mapping = [];
+  safe.axis_mapping = safe.axis_mapping.map((x) => String(x || "").trim()).filter(Boolean);
+  if (safe.axis_mapping.length < 4) {
+    const fills = (Array.isArray(selections) ? selections : []).map((s) => `围绕${s.axis}轴（${s.option}）做中度映射，避免反向偏离。`);
+    for (const row of fills) {
+      if (safe.axis_mapping.length >= 4) break;
+      safe.axis_mapping.push(row);
+    }
+  }
+
+  safe.tradeoff_notes = String(safe.tradeoff_notes || "").trim() || "当前版本优先保证设定一致性，细节风格可在重生成中微调。";
+  safe.regen_suggestion = String(safe.regen_suggestion || "").trim() || "如需更强冲突，可提高关系拉扯与现实代价密度。";
+
+  if (mode === "timeline") {
+    safe.timeline = String(safe.timeline || "").trim() || "第一幕建立关系动力，第二幕失衡加剧，第三幕代价兑现与关系重构。";
+    safe.ending_payoff = String(safe.ending_payoff || "").trim() || "终局与已选终局轴保持同向兑现，给出代价与情感回收。";
+  }
+
+  return safe;
+}
 
 function checkProgrammaticAlignment(obj, selections, extraPrompt = "") {
   const issues = [];
