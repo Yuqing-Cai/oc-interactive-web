@@ -130,7 +130,58 @@ async function runGeneration(body, env, hooks = {}) {
   let finalModel = model;
   let repaired = false;
 
-  // 单次主生成：直接产出最终结构，避免多阶段链路导致长尾超时。
+  const totalBudgetMs = Number(env.TOTAL_BUDGET_MS || 90000);
+  const deadline = Date.now() + totalBudgetMs;
+  const remainingMs = () => Math.max(0, deadline - Date.now());
+  const boundedTimeout = (targetMs, reserveMs = 2000, floorMs = 5000) => {
+    const r = remainingMs() - reserveMs;
+    if (r <= 0) {
+      const e = new Error("Upstream request timed out");
+      e.name = "TimeoutError";
+      throw e;
+    }
+    return Math.max(Math.min(targetMs, r), floorMs);
+  };
+
+  // Step 4: 先做超短草案（无快模型时同模型短超时），仅作为扩写参考；失败直接跳过，不影响主流程。
+  let draftText = "";
+  const draftEnabled = String(env.ENABLE_DRAFT_STAGE || "true").toLowerCase() !== "false";
+  if (draftEnabled) {
+    const draftTimeoutMs = Number(env.DRAFT_TIMEOUT_MS || 10000);
+    try {
+      mark("draft_request_started", { model, timeoutMs: draftTimeoutMs });
+      const draftRes = await requestWithTransientRetries(
+        apiUrl,
+        apiKey,
+        {
+          model,
+          temperature: 0.25,
+          max_tokens: 500,
+          messages: [
+            { role: "system", content: "你是设定草案器。输出简短要点，不要长文。" },
+            { role: "user", content: `${userPrompt}\n\n请先给出 5-8 条极简草案要点，中文。` },
+          ],
+        },
+        { timeoutMs: boundedTimeout(draftTimeoutMs, 4000, 3000), retries: 0 }
+      );
+
+      if (draftRes.ok) {
+        const draftData = await draftRes.json();
+        draftText = String(draftData?.choices?.[0]?.message?.content || "").trim().slice(0, 900);
+        if (draftText) mark("draft_response_received", { size: draftText.length });
+      }
+    } catch (err) {
+      if (err?.name === "TimeoutError") {
+        mark("draft_timeout");
+      }
+    }
+  }
+
+  const finalUserPrompt = draftText
+    ? `${userPrompt}\n\n参考草案（用于对齐方向，可重写优化）：\n${draftText}`
+    : userPrompt;
+
+  // 主生成：总预算内执行，避免长尾拖死。
   const payload = {
     model,
     temperature: 0.62,
@@ -145,7 +196,7 @@ async function runGeneration(body, env, hooks = {}) {
     },
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
+      { role: "user", content: finalUserPrompt },
     ],
   };
 
@@ -157,7 +208,7 @@ async function runGeneration(body, env, hooks = {}) {
   let primaryTimeout = false;
 
   try {
-    upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: primaryTimeoutMs, retries: 0 });
+    upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: boundedTimeout(primaryTimeoutMs, 2500, 5000), retries: 0 });
   } catch (err) {
     if (err?.name === "TimeoutError") {
       primaryTimeout = true;
@@ -177,9 +228,10 @@ async function runGeneration(body, env, hooks = {}) {
     if (upstream && !upstream.ok) {
       mark("upstream_retryable_error", { status: upstream.status, fallbackModel });
     }
-    mark("fallback_request_started", { model: fallbackModel, timeoutMs: fallbackTimeoutMs });
+    const fbTimeout = boundedTimeout(fallbackTimeoutMs, 1500, 4000);
+    mark("fallback_request_started", { model: fallbackModel, timeoutMs: fbTimeout });
     finalModel = fallbackModel;
-    upstream = await requestWithTransientRetries(apiUrl, apiKey, { ...payload, model: fallbackModel }, { timeoutMs: fallbackTimeoutMs, retries: 0 });
+    upstream = await requestWithTransientRetries(apiUrl, apiKey, { ...payload, model: fallbackModel }, { timeoutMs: fbTimeout, retries: 0 });
     mark("fallback_response_received", { status: upstream.status });
   }
 
@@ -245,7 +297,7 @@ async function runGeneration(body, env, hooks = {}) {
       mark("alignment_local_repair_applied", { round: 1 });
     } else {
       mark("alignment_repair_started", { round: 2 });
-      const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, userPrompt, structured.value, issues, mode);
+      const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, finalUserPrompt, structured.value, issues, mode);
       if (!repairedObj) {
         mark("alignment_repair_failed", { round: 2 });
         const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
