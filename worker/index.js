@@ -149,22 +149,46 @@ async function runGeneration(body, env, hooks = {}) {
     ],
   };
 
-  mark("upstream_request_started", { model });
-  let upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: 120000, retries: 1 });
+  const primaryTimeoutMs = Number(env.PRIMARY_TIMEOUT_MS || 85000);
+  const fallbackTimeoutMs = Number(env.FALLBACK_TIMEOUT_MS || 70000);
 
-  if (!upstream.ok && isRetryableStatus(upstream.status) && fallbackModel) {
-    mark("upstream_retryable_error", { status: upstream.status, fallbackModel });
-    mark("fallback_request_started", { model: fallbackModel });
+  mark("upstream_request_started", { model });
+  let upstream = null;
+  let primaryTimeout = false;
+
+  try {
+    upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: primaryTimeoutMs, retries: 0 });
+  } catch (err) {
+    if (err?.name === "TimeoutError") {
+      primaryTimeout = true;
+      mark("upstream_timeout", { model, timeoutMs: primaryTimeoutMs });
+    } else {
+      throw err;
+    }
+  }
+
+  const shouldFallback = Boolean(fallbackModel) && (
+    primaryTimeout ||
+    !upstream ||
+    (upstream && !upstream.ok && isRetryableStatus(upstream.status))
+  );
+
+  if (shouldFallback) {
+    if (upstream && !upstream.ok) {
+      mark("upstream_retryable_error", { status: upstream.status, fallbackModel });
+    }
+    mark("fallback_request_started", { model: fallbackModel, timeoutMs: fallbackTimeoutMs });
     finalModel = fallbackModel;
-    upstream = await requestWithTransientRetries(apiUrl, apiKey, { ...payload, model: fallbackModel }, { timeoutMs: 90000, retries: 1 });
+    upstream = await requestWithTransientRetries(apiUrl, apiKey, { ...payload, model: fallbackModel }, { timeoutMs: fallbackTimeoutMs, retries: 0 });
     mark("fallback_response_received", { status: upstream.status });
   }
 
-  if (!upstream.ok) {
-    const text = await upstream.text();
-    mark("upstream_error", { status: upstream.status });
-    const e = new Error(`Upstream error(${upstream.status}): ${text}`);
-    e.status = upstream.status;
+  if (!upstream || !upstream.ok) {
+    const status = upstream?.status || 504;
+    const text = upstream ? await upstream.text() : "no upstream response";
+    mark("upstream_error", { status });
+    const e = new Error(`Upstream error(${status}): ${text}`);
+    e.status = status;
     throw e;
   }
 
@@ -245,7 +269,7 @@ function mapError(err) {
       status: 504,
       code: "UPSTREAM_TIMEOUT",
       message:
-        "模型响应超时（单次请求上限约120秒，已自动重试/降级）。通常是上游拥塞或当前提示过重；请重试。",
+        "模型响应超时（已自动重试/降级）。通常是上游拥塞或当前提示较重；请重试。",
     };
   }
 
@@ -656,7 +680,7 @@ async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
         ],
       }),
     },
-    30000
+    22000
   );
 
   if (!res.ok) return null;
@@ -704,7 +728,7 @@ async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPro
         ],
       }),
     },
-    35000
+    26000
   );
 
   if (!res.ok) return null;
