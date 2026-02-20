@@ -367,6 +367,61 @@ function checkProgrammaticAlignment(obj, selections, extraPrompt = "") {
 }
 
 
+function buildOutputSchema(mode) {
+  const timelineProps = mode === "timeline"
+    ? {
+        timeline: { type: "string", minLength: 200 },
+        ending_payoff: { type: "string", minLength: 120 },
+      }
+    : {};
+
+  const timelineReq = mode === "timeline" ? ["timeline", "ending_payoff"] : [];
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      overview: { type: "string", minLength: 120 },
+      male_profile: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          mbti: { type: "string", pattern: "^[EI][NS][FT][JP]$" },
+          enneagram: { type: "string", minLength: 2 },
+          instinctual_variant: { type: "string", pattern: "^(sp|sx|so)\\/(sp|sx|so)$" },
+          profile_body: { type: "string", minLength: mode === "timeline" ? 700 : 550 },
+        },
+        required: ["mbti", "enneagram", "instinctual_variant", "profile_body"],
+      },
+      world_slice: { type: "string", minLength: 120 },
+      mc_intel: { type: "string", minLength: 100 },
+      relationship_dynamics: { type: "string", minLength: 100 },
+      axis_mapping: {
+        type: "array",
+        minItems: 4,
+        maxItems: 8,
+        items: { type: "string", minLength: 8 },
+      },
+      tradeoff_notes: { type: "string", minLength: 20 },
+      regen_suggestion: { type: "string", minLength: 10 },
+      opening_scene: { type: "string", minLength: mode === "timeline" ? 250 : 300 },
+      ...timelineProps,
+    },
+    required: [
+      "overview",
+      "male_profile",
+      "world_slice",
+      "mc_intel",
+      "relationship_dynamics",
+      "axis_mapping",
+      "tradeoff_notes",
+      "regen_suggestion",
+      "opening_scene",
+      ...timelineReq,
+    ],
+  };
+}
+
 function parseStructuredOutput(raw, mode) {
   const normalized = normalizeJsonLikeContent(raw);
   let obj = null;
