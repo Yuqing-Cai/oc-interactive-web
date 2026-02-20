@@ -482,13 +482,20 @@ function parseStructuredOutput(raw, mode) {
 
   if (!obj.male_profile || typeof obj.male_profile !== "object") return { ok: false, reason: "缺少 male_profile" };
 
-  const mbti = normalizeMbti(obj.male_profile.mbti);
+  const mergedProfileText = [
+    obj.male_profile.mbti,
+    obj.male_profile.instinctual_variant,
+    obj.male_profile.profile_body,
+    raw,
+  ].map((x) => String(x || "")).join("\n");
+
+  const mbti = normalizeMbti(obj.male_profile.mbti) || extractMbtiFromText(mergedProfileText);
   if (!mbti) return { ok: false, reason: "MBTI 非法" };
   obj.male_profile.mbti = mbti;
 
   if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
 
-  const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant);
+  const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant) || extractInstinctFromText(mergedProfileText);
   if (!iv) return { ok: false, reason: "副型非法" };
   obj.male_profile.instinctual_variant = iv;
 
@@ -604,6 +611,14 @@ function normalizeMbti(value) {
   return m ? m[0] : "";
 }
 
+function extractMbtiFromText(text) {
+  const src = String(text || "").toUpperCase();
+  const direct = src.match(/\b([EI][NS][FT][JP])(?:[-_/ ]?[AT])?\b/);
+  if (direct) return direct[1];
+  const fuzzy = src.replace(/[^A-Z]/g, "").match(/[EI][NS][FT][JP]/);
+  return fuzzy ? fuzzy[0] : "";
+}
+
 function normalizeInstinctVariant(value) {
   const text = String(value || "").toLowerCase().trim();
   if (!text) return "";
@@ -621,6 +636,20 @@ function normalizeInstinctVariant(value) {
   if (/^(sp|sx|so)$/.test(canonical)) return `${canonical}/sx`;
 
   const found = canonical.match(/sp|sx|so/g) || [];
+  if (found.length >= 2) return `${found[0]}/${found[1]}`;
+  if (found.length === 1) return `${found[0]}/sx`;
+  return "";
+}
+
+function extractInstinctFromText(text) {
+  const src = String(text || "").toLowerCase();
+  const mapped = src
+    .replace(/自保/g, "sp")
+    .replace(/亲密|一对一/g, "sx")
+    .replace(/社交/g, "so");
+  const direct = mapped.match(/\b(sp|sx|so)\s*[\/｜|,， ]\s*(sp|sx|so)\b/);
+  if (direct) return `${direct[1]}/${direct[2]}`;
+  const found = mapped.match(/\bsp\b|\bsx\b|\bso\b/g) || [];
   if (found.length >= 2) return `${found[0]}/${found[1]}`;
   if (found.length === 1) return `${found[0]}/sx`;
   return "";
