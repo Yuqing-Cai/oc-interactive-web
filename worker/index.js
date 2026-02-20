@@ -270,7 +270,8 @@ async function runGeneration(body, env, hooks = {}) {
 
   mark("alignment_check_passed", { round: issues.length ? 2 : 1 });
 
-  const content = renderStructuredMarkdown(structured.value, mode);
+  const finalized = enforceTemplateShape(structured.value, mode, selections);
+  const content = renderStructuredMarkdown(finalized, mode);
   mark("completed", { repaired });
   return {
     content,
@@ -826,6 +827,48 @@ async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPro
   const raw = data?.choices?.[0]?.message?.content;
   const parsed = parseStructuredOutput(raw, mode);
   return parsed.ok ? parsed.value : null;
+}
+
+function enforceTemplateShape(obj, mode, selections = []) {
+  const safe = JSON.parse(JSON.stringify(obj || {}));
+  const txt = (v, d = "") => {
+    const s = String(v || "").trim();
+    return s || d;
+  };
+
+  safe.overview = txt(safe.overview, "暂无总览，建议重试以获取更完整版本。");
+  safe.world_slice = txt(safe.world_slice, "暂无世界切片，建议重试。");
+  safe.mc_intel = txt(safe.mc_intel, "暂无MC情报，建议重试。");
+  safe.relationship_dynamics = txt(safe.relationship_dynamics, "暂无关系动力学描述，建议重试。");
+  safe.tradeoff_notes = txt(safe.tradeoff_notes, "当前版本优先保证一致性，细节风格可下一轮微调。");
+  safe.regen_suggestion = txt(safe.regen_suggestion, "下一轮可增加具体场景与行为限制词。" );
+  safe.opening_scene = txt(safe.opening_scene, "我在雨夜里看见他，城市的霓虹像一场迟到的审判。\n\n（系统兜底开场：建议重生成以获得完整文本。）");
+
+  safe.male_profile = safe.male_profile || {};
+  safe.male_profile.mbti = normalizeMbti(safe.male_profile.mbti) || "INTJ";
+  safe.male_profile.enneagram = txt(safe.male_profile.enneagram, "5w4");
+  safe.male_profile.instinctual_variant = normalizeInstinctVariant(safe.male_profile.instinctual_variant) || "sp/sx";
+  safe.male_profile.profile_body = txt(safe.male_profile.profile_body, "暂无男主档案，建议重试获取完整背景。\n\n（系统兜底内容）");
+
+  if (!Array.isArray(safe.axis_mapping)) safe.axis_mapping = [];
+  safe.axis_mapping = safe.axis_mapping.map((x) => String(x || "").trim()).filter(Boolean);
+  if (safe.axis_mapping.length < 4) {
+    const fills = (Array.isArray(selections) ? selections : []).map((s) => `围绕${s.axis}轴（${s.option}）进行中度映射，保持一致性。`);
+    for (const row of fills) {
+      if (safe.axis_mapping.length >= 4) break;
+      safe.axis_mapping.push(row);
+    }
+  }
+  while (safe.axis_mapping.length < 4) {
+    safe.axis_mapping.push("保留角色动机—关系拉扯—现实代价三层联动，避免模板化拼接。");
+  }
+
+  if (mode === "timeline") {
+    safe.timeline = txt(safe.timeline, "第一幕建立关系张力；第二幕冲突升级并支付代价；第三幕完成终局兑现。");
+    safe.ending_payoff = txt(safe.ending_payoff, "终局兑现与已选终局轴同向，给出情感与现实双重回收。");
+  }
+
+  return safe;
 }
 
 function renderStructuredMarkdown(obj, mode) {
