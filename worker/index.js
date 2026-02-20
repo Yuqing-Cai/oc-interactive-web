@@ -331,15 +331,15 @@ function buildUserPrompt(selections, extraPrompt, mode) {
     `请基于以下已选轴要素，生成‘高完成度单版本男主设定’（模式：${mode === "timeline" ? "完整时间线骨架" : "开场静态"}）：`,
     selections
       .map((s) => {
-        const long = String(s.longDetail || "").trim();
-        const detail = String(s.detail || "").trim();
+        const long = String(s.longDetail || "").trim().slice(0, 180);
+        const detail = String(s.detail || "").trim().slice(0, 80);
         const chunks = [`- ${s.axis}: ${s.option}`];
         if (detail) chunks.push(`短释义：${detail}`);
         if (long) chunks.push(`扩展说明：${long}`);
         return chunks.join("｜");
       })
       .join("\n"),
-    extraPrompt ? `\n补充提示词/约束：${extraPrompt}` : "",
+    extraPrompt ? `\n补充提示词/约束：${String(extraPrompt).slice(0, 320)}` : "",
   ].join("\n");
 }
 
