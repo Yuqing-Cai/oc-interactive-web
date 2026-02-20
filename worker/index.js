@@ -145,7 +145,7 @@ async function runGeneration(body, env, hooks = {}) {
 
   // Step 4: 先做超短草案（无快模型时同模型短超时），仅作为扩写参考；失败直接跳过，不影响主流程。
   let draftText = "";
-  const draftEnabled = String(env.ENABLE_DRAFT_STAGE || "true").toLowerCase() !== "false";
+  const draftEnabled = String(env.ENABLE_DRAFT_STAGE || "false").toLowerCase() === "true";
   if (draftEnabled) {
     const draftTimeoutMs = Number(env.DRAFT_TIMEOUT_MS || 10000);
     try {
