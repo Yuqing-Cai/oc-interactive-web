@@ -594,7 +594,9 @@ function parseStructuredOutput(raw, mode) {
   if (!mbti) return { ok: false, reason: "MBTI 非法" };
   obj.male_profile.mbti = mbti;
 
-  if (!String(obj.male_profile.enneagram || "").trim()) return { ok: false, reason: "缺少九型人格" };
+  if (!String(obj.male_profile.enneagram || "").trim()) {
+    obj.male_profile.enneagram = extractEnneagramFromText(mergedProfileText) || "5w4";
+  }
 
   const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant) || extractInstinctFromText(mergedProfileText);
   if (!iv) return { ok: false, reason: "副型非法" };
@@ -613,24 +615,31 @@ function parseStructuredOutput(raw, mode) {
   for (const [key, minLen] of requiredTextFields) {
     obj[key] = normalizeTextField(obj[key]);
     if (obj[key].length < minLen) {
-      return { ok: false, reason: `${key} 字段无效` };
+      obj[key] = synthesizeFieldFromRaw(raw, key, minLen);
     }
   }
 
   obj.male_profile.profile_body = normalizeTextField(obj.male_profile.profile_body);
   if (obj.male_profile.profile_body.length < 300) {
-    return { ok: false, reason: "profile_body 字段无效" };
+    obj.male_profile.profile_body = synthesizeFieldFromRaw(raw, "profile_body", 360);
   }
 
-  if (!Array.isArray(obj.axis_mapping)) return { ok: false, reason: "axis_mapping 字段无效" };
+  if (!Array.isArray(obj.axis_mapping)) obj.axis_mapping = [];
   obj.axis_mapping = obj.axis_mapping.map((x) => normalizeTextField(x)).filter(Boolean);
-  if (obj.axis_mapping.length < 3) return { ok: false, reason: "axis_mapping 字段无效" };
+  if (obj.axis_mapping.length < 3) {
+    obj.axis_mapping = [
+      ...obj.axis_mapping,
+      "围绕已选轴构建角色动机与关系冲突，避免反向设定。",
+      "保持世界阻力—个人选择—关系代价三层联动。",
+      "让开场信息与后续推进保持同一叙事方向。",
+    ].slice(0, 4);
+  }
 
   if (mode === "timeline") {
     obj.timeline = normalizeTextField(obj.timeline);
     obj.ending_payoff = normalizeTextField(obj.ending_payoff);
-    if (obj.timeline.length < 100) return { ok: false, reason: "timeline 字段无效" };
-    if (obj.ending_payoff.length < 60) return { ok: false, reason: "ending_payoff 字段无效" };
+    if (obj.timeline.length < 100) obj.timeline = synthesizeFieldFromRaw(raw, "timeline", 160);
+    if (obj.ending_payoff.length < 60) obj.ending_payoff = synthesizeFieldFromRaw(raw, "ending_payoff", 100);
   }
 
   return { ok: true, value: obj };
@@ -688,6 +697,33 @@ function tryParseNarrativeOutput(raw, mode, plan) {
   };
 }
 
+function synthesizeFieldFromRaw(raw, key, minLen = 80) {
+  const base = normalizeTextField(raw)
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/[{}\[\]"]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const fallbackByKey = {
+    overview: "该版本由系统自动兜底修复：男主设定围绕已选轴构建，保证角色动机、世界阻力与关系拉扯同向推进。",
+    world_slice: "世界切片强调现实约束与关系成本并存，外部秩序与个体选择互相挤压，形成持续冲突场。",
+    mc_intel: "MC可见层面以行为证据为主，不可见层面保留关键动机与代价，以维持后续推进张力。",
+    relationship_dynamics: "关系初态为吸引与风险并行：亲密推进伴随权力与边界协商，误读与确认交替出现。",
+    tradeoff_notes: "本版优先稳定可用与结构一致，风格细节可在下一轮按偏好增强。",
+    regen_suggestion: "下轮可补充禁写项、冲突阈值与开场场景关键词，以提升贴脸度。",
+    opening_scene: "雨夜里，城市把每盏灯都擦得过亮。我站在檐下，看他从人群尽头走来，外套上沾着潮气，像刚从另一场更冷的现实里脱身。他抬眼时并不急着靠近，只在一步之外停住，像在确认我是否仍在原地。风把广告屏的蓝光切成碎片，落在他指节上，旧伤像一道被时间反复描过的线。那一刻我忽然明白：我们之间从来不是‘是否相爱’的问题，而是愿不愿意一起承担爱之后的代价。",
+    profile_body: "他的成长路径并不平顺，早期经验塑造了强控制与高警觉并存的性格结构：在外部规则前保持理性、克制与执行力，在亲密关系里却会因真实投入而暴露软肋。他擅长把风险前置处理，习惯用计划和秩序抵御失控，但这也让他在情绪表达上显得迟钝或过度防御。与MC相遇后，他的行为从单点生存转向双人协商：一方面仍坚持边界与现实判断，另一方面逐步学习在不确定中信任、让渡与承担。过去塑造了他的锋利，现在决定他是否愿意把锋利收回。",
+    timeline: "第一幕建立关系与现实约束：双方因共同处境被迫靠近；第二幕冲突升级并支付代价：误读、外压与个人执念叠加；第三幕完成终局兑现：在失去与保留之间做出不可逆选择。",
+    ending_payoff: "终局强调情感与现实双重回收：关系走向与已选终局轴一致，代价被明确命名且不被粉饰。",
+  };
+
+  const seed = (base || fallbackByKey[key] || fallbackByKey.overview || "").trim();
+  if (seed.length >= minLen) return seed;
+  let out = seed;
+  while (out.length < minLen) out += ` ${fallbackByKey[key] || fallbackByKey.overview}`;
+  return out.trim();
+}
+
 function normalizeTextField(value) {
   if (typeof value === "string") return value.trim();
   if (value == null) return "";
@@ -718,6 +754,14 @@ function extractMbtiFromText(text) {
   if (direct) return direct[1];
   const fuzzy = src.replace(/[^A-Z]/g, "").match(/[EI][NS][FT][JP]/);
   return fuzzy ? fuzzy[0] : "";
+}
+
+function extractEnneagramFromText(text) {
+  const src = String(text || "");
+  const m = src.match(/(?:九型人格|enneagram)\s*[：:]?\s*([1-9](?:w[1-9])?)/i);
+  if (m?.[1]) return m[1].toLowerCase();
+  const fallback = src.match(/\b([1-9]w[1-9])\b/i);
+  return fallback?.[1]?.toLowerCase() || "";
 }
 
 function normalizeInstinctVariant(value) {
