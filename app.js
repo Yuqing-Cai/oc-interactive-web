@@ -97,7 +97,7 @@ const sideRainLeft = document.getElementById("sideRainLeft");
 const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
-const FIXED_MODEL = "MiniMax-M2.5";
+const FIXED_MODEL = "glm-5";
 const DEBUG_TRACE = new URLSearchParams(window.location.search).get("debug") === "1";
 const defaultTheme = "cyan";
 if (themeSelect) {

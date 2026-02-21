@@ -95,7 +95,8 @@ async function handleGenerateStream(request, env, ctx) {
 }
 
 async function runGeneration(body, env, hooks = {}) {
-  const { selections = [], model = "MiniMax-M2.5", extraPrompt = "" } = body || {};
+  const { selections = [], model: requestedModel = "", extraPrompt = "" } = body || {};
+  const model = (env.PRIMARY_MODEL || requestedModel || "glm-5").trim();
 
   if (!Array.isArray(selections) || selections.length < 3) {
     const e = new Error("At least 3 selections are required.");
