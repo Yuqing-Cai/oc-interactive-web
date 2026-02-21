@@ -301,9 +301,9 @@ async function runGeneration(body, env, hooks = {}) {
       const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, finalUserPrompt, structured.value, issues, mode);
       if (!repairedObj) {
         mark("alignment_repair_failed", { round: 2 });
-        const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
-        e.status = 502;
-        throw e;
+        structured = { ok: true, value: repairStructuredFieldsLocally(structured.value, mode, selections) };
+        repaired = true;
+        issues = [];
       }
 
       structured = { ok: true, value: repairedObj };
@@ -314,9 +314,9 @@ async function runGeneration(body, env, hooks = {}) {
       issues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
       if (issues.length) {
         mark("alignment_check_failed", { round: 2, issues: issues.length });
-        const e = new Error(`生成内容与选轴/补充提示词不一致：${issues.slice(0, 3).join("；") || "请重试"}`);
-        e.status = 502;
-        throw e;
+        structured = { ok: true, value: repairStructuredFieldsLocally(structured.value, mode, selections) };
+        repaired = true;
+        issues = [];
       }
     }
   }
