@@ -28,7 +28,7 @@ async function handleGenerateJson(request, env) {
     const result = await runGeneration(body, env);
     return json({ content: result.content, meta: result.meta }, 200);
   } catch (err) {
-    if (isEmergencyFallbackEnabled(env) && shouldEmergencyFallback(err)) {
+    if (shouldServeEmergencyResult(err, env)) {
       const emergency = buildEmergencyResult(body, `degraded:${err?.name || "error"}:${err?.message || "upstream"}`);
       return json({ content: emergency.content, meta: emergency.meta }, 200);
     }
@@ -78,7 +78,7 @@ async function handleGenerateStream(request, env, ctx) {
         meta: result.meta,
       });
     } catch (err) {
-      if (isEmergencyFallbackEnabled(env) && shouldEmergencyFallback(err)) {
+      if (shouldServeEmergencyResult(err, env)) {
         const emergency = buildEmergencyResult(body, `degraded:${err?.name || "error"}:${err?.message || "upstream"}`);
         await send({ type: "done", content: emergency.content, meta: emergency.meta });
       } else {
@@ -398,6 +398,16 @@ function isModelFallbackEnabled(env) {
 
 function isEmergencyFallbackEnabled(env) {
   return parseBoolEnv(env?.ENABLE_EMERGENCY_FALLBACK, true);
+}
+
+function shouldServeEmergencyResult(err, env) {
+  if (!isEmergencyFallbackEnabled(env)) return false;
+  const timeoutOnly = parseBoolEnv(env?.EMERGENCY_TIMEOUT_ONLY, true);
+  if (!timeoutOnly) return shouldEmergencyFallback(err);
+
+  if (err?.name === "TimeoutError") return true;
+  const status = Number(err?.status || 0);
+  return status === 524;
 }
 
 function shouldEmergencyFallback(err) {
