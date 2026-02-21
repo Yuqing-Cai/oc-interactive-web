@@ -317,13 +317,30 @@ async function generate(isRegenerate) {
         finalContent = jsonResult.content || "";
         finalMeta = jsonResult.meta || null;
       } catch (jsonErr) {
-        liveTrace.push({ stage: "json_failed_hard_error", t: Math.floor(performance.now() - startedAt) });
-        throw jsonErr;
+        liveTrace.push({ stage: "json_failed_fallback_local", t: Math.floor(performance.now() - startedAt) });
+        finalContent = buildClientEmergencyContent(selections, extraPrompt, mode);
+        finalMeta = {
+          mode,
+          repaired: true,
+          trace: liveTrace,
+          totalMs: Math.floor(performance.now() - startedAt),
+          finalModel: "frontend-local-fallback",
+          fallbackUsed: true,
+        };
       }
     }
 
     if (!finalContent) {
-      throw new Error("服务端未返回最终内容。");
+      liveTrace.push({ stage: "empty_content_fallback_local", t: Math.floor(performance.now() - startedAt) });
+      finalContent = buildClientEmergencyContent(selections, extraPrompt, mode);
+      finalMeta = finalMeta || {
+        mode,
+        repaired: true,
+        trace: liveTrace,
+        totalMs: Math.floor(performance.now() - startedAt),
+        finalModel: "frontend-local-fallback",
+        fallbackUsed: true,
+      };
     }
 
     resultEl.innerHTML = renderResultContent(finalContent);
@@ -440,6 +457,73 @@ async function requestGenerateJson(apiUrl, payload, timeoutMs = REQUEST_TIMEOUT_
   }
 }
 
+function buildClientEmergencyContent(selections = [], extraPrompt = "", mode = "opening") {
+  const picked = (Array.isArray(selections) ? selections : []).slice(0, 6);
+  const mapping = picked.length
+    ? picked.map((s) => `- 围绕${s.axis}轴（${s.option}）做中度映射，不反向抵消。`).join("\n")
+    : "- 围绕已选轴保持人物动机、关系冲突、现实代价三层联动。";
+  const extra = String(extraPrompt || "").trim();
+
+  const base = [
+    "1) 设定总览（玩家上帝视角）",
+    "本次结果触发本地兜底：优先保证你拿到完整可读稿，不返回空白或报错。",
+    "",
+    "2) 男主完整档案（玩家上帝视角）",
+    "MBTI：INTJ",
+    "九型人格：5w4",
+    "副型：sp/sx",
+    `他在高压秩序环境中形成了克制与警觉并存的生存策略：对外执行力强、边界清晰，对内长期压抑真实需求。${extra ? `补充约束已吸收：${extra}。` : "当前版本先保结构稳定，后续可继续加细节。"}`,
+    "",
+    "3) 世界观与时代切片（玩家上帝视角）",
+    "外部秩序与个体欲望持续摩擦，关系推进必须支付现实代价，因此每次靠近都伴随风险。",
+    "",
+    "4) MC视角情报（她知道 / 不知道）",
+    "她看见的是可靠与克制，看不见的是男主对失控的恐惧与代价预判；信息差将驱动后续冲突。",
+    "",
+    "5) 关系初始动力学（此刻已成立）",
+    "关系初态为吸引与防御并行：边界被尊重时亲密推进，边界被误读时冲突放大。",
+    "",
+  ];
+
+  if (mode === "timeline") {
+    return [
+      ...base,
+      "6) 三幕时间线骨架（细节留白）",
+      "第一幕建立关系与现实阻力；第二幕误读叠加并支付代价；第三幕完成不可逆选择与终局兑现。",
+      "",
+      "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
+      "终局与终局相关轴同向，明确谁失去什么、关系保留什么。",
+      "",
+      "8) 选轴映射说明",
+      mapping,
+      "",
+      "9) 矛盾度与取舍说明",
+      "本版优先稳定可用，其次再做文风与冲突强度优化。",
+      "",
+      "10) 下次重生成建议",
+      extra ? `保留“${extra.slice(0, 100)}”，并补充禁写项/开场场景关键词。` : "补充禁写项、冲突阈值、开场场景关键词。",
+      "",
+      "11) 开场片段（250~450字，MC第一视角）",
+      "风从高楼缝隙里灌下来，雨丝像一层冷薄的网。我看见他在街角停了一秒，像先确认了所有退路才走向我。他没有先解释，也没有试图碰我，只低声问：‘你现在想让我做什么？’那一刻我忽然明白，他的温柔不是天生的，而是把锋利一寸寸收回后的结果。我们之间的问题从来不是爱不爱，而是谁愿意先承认：爱本身就要付出代价。",
+    ].join("\n");
+  }
+
+  return [
+    ...base,
+    "6) 选轴映射说明",
+    mapping,
+    "",
+    "7) 矛盾度与取舍说明",
+    "本版优先稳定可用，其次再做文风与冲突强度优化。",
+    "",
+    "8) 下次重生成建议",
+    extra ? `保留“${extra.slice(0, 100)}”，并补充禁写项/开场场景关键词。` : "补充禁写项、冲突阈值、开场场景关键词。",
+    "",
+    "9) 开场片段（300~500字，MC第一视角）",
+    "雨夜里灯光太亮，像把每个人的心思都照得无所遁形。我站在檐下看他走来，他的脚步很稳，像先把所有风险都算过才决定靠近。他在一步之外停住，没有解释迟到，也没有急着表态，只问我：‘你要我留下，还是离开？’我突然意识到，他不是不会爱，而是习惯先把代价扛在自己身上。我们之间真正困难的，从来不是选择彼此，而是学会在不确定里仍然并肩。",
+  ].join("\n");
+}
+
 function setLoading(loading) {
   generateBtn.disabled = loading;
   regenBtn.disabled = loading;
@@ -478,7 +562,8 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     alignment_repair_applied: "重写已应用",
     alignment_repair_failed: "重写失败",
     stream_failed_fallback_json: "流式失败，切换稳态通道",
-    json_failed_hard_error: "稳态通道失败，直接报错",
+    json_failed_fallback_local: "稳态通道失败，启用本地应急",
+    empty_content_fallback_local: "返回为空，启用本地应急",
     upstream_error: "模型请求失败",
     completed: "生成完成",
   };
