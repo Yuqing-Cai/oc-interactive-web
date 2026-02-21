@@ -717,21 +717,22 @@ function tryParseNarrativeOutput(raw, mode, plan) {
 }
 
 function synthesizeStructuredFromRaw(raw, mode, selections = [], extraPrompt = "") {
-  const axisMapping = (Array.isArray(selections) ? selections : [])
-    .slice(0, 6)
+  const picked = (Array.isArray(selections) ? selections : []).slice(0, 6);
+  const axisMapping = picked
     .map((s) => `围绕${s.axis}轴（${s.option}）进行中度映射，保持与补充提示词一致。`);
+  const pickedSummary = picked.map((s) => `${s.axis}:${s.option}`).join("；");
 
   const obj = {
-    overview: synthesizeFieldFromRaw(raw, "overview", 120),
+    overview: synthesizeFieldFromRaw(`${raw}\n已选轴：${pickedSummary}`, "overview", 180),
     male_profile: {
       mbti: extractMbtiFromText(raw) || "INTJ",
       enneagram: extractEnneagramFromText(raw) || "5w4",
       instinctual_variant: extractInstinctFromText(raw) || "sp/sx",
       profile_body: synthesizeFieldFromRaw(`${raw}\n${extraPrompt}`, "profile_body", mode === "timeline" ? 720 : 560),
     },
-    world_slice: synthesizeFieldFromRaw(raw, "world_slice", 120),
-    mc_intel: synthesizeFieldFromRaw(raw, "mc_intel", 100),
-    relationship_dynamics: synthesizeFieldFromRaw(raw, "relationship_dynamics", 100),
+    world_slice: synthesizeFieldFromRaw(`${raw}\n已选轴：${pickedSummary}`, "world_slice", 140),
+    mc_intel: synthesizeFieldFromRaw(`${raw}\n补充偏好：${extraPrompt}`, "mc_intel", 120),
+    relationship_dynamics: synthesizeFieldFromRaw(`${raw}\n已选轴：${pickedSummary}`, "relationship_dynamics", 130),
     axis_mapping: axisMapping.length ? axisMapping : [
       "围绕已选轴构建角色动机与关系冲突，避免反向设定。",
       "保持世界阻力—个人选择—关系代价三层联动。",
@@ -1029,19 +1030,19 @@ function enforceTemplateShape(obj, mode, selections = []) {
     return s || d;
   };
 
-  safe.overview = txt(safe.overview, "暂无总览，建议重试以获取更完整版本。");
-  safe.world_slice = txt(safe.world_slice, "暂无世界切片，建议重试。");
-  safe.mc_intel = txt(safe.mc_intel, "暂无MC情报，建议重试。");
-  safe.relationship_dynamics = txt(safe.relationship_dynamics, "暂无关系动力学描述，建议重试。");
+  safe.overview = txt(safe.overview, "该版本为稳定降级生成：已按选轴建立人物驱动、世界阻力与关系张力的基础骨架，可直接用于二次精修。");
+  safe.world_slice = txt(safe.world_slice, "世界层处于高摩擦状态：秩序压力与个体欲望并存，关系推进需要持续支付现实成本。");
+  safe.mc_intel = txt(safe.mc_intel, "MC当前可见的是行为与态度，不可见的是男主动机与代价清单；这种信息差将驱动后续冲突与确认。");
+  safe.relationship_dynamics = txt(safe.relationship_dynamics, "关系初态并非纯甜或纯虐，而是‘吸引+防御’并行：双方靠近的同时保持边界试探。");
   safe.tradeoff_notes = txt(safe.tradeoff_notes, "当前版本优先保证一致性，细节风格可下一轮微调。");
   safe.regen_suggestion = txt(safe.regen_suggestion, "下一轮可增加具体场景与行为限制词。" );
-  safe.opening_scene = txt(safe.opening_scene, "我在雨夜里看见他，城市的霓虹像一场迟到的审判。\n\n（系统兜底开场：建议重生成以获得完整文本。）");
+  safe.opening_scene = txt(safe.opening_scene, "雨从高架桥的边缘垂下来，像一层薄而冷的帘。我站在便利店门口，看见他逆着人流走来，外套肩线被雨水压得更硬，眼神却比夜色更安静。他在两步外停下，没有先解释迟到，也没有碰我，只低声问一句：‘你还愿意听我把话说完吗？’广告屏的蓝光掠过他指节，旧伤在那一瞬亮了一下，像某种被反复掩埋又反复浮出的证据。我忽然意识到，我们真正要谈的不是对错，而是谁先承认：这段关系从开始就不是无成本的。");
 
   safe.male_profile = safe.male_profile || {};
   safe.male_profile.mbti = normalizeMbti(safe.male_profile.mbti) || "INTJ";
   safe.male_profile.enneagram = txt(safe.male_profile.enneagram, "5w4");
   safe.male_profile.instinctual_variant = normalizeInstinctVariant(safe.male_profile.instinctual_variant) || "sp/sx";
-  safe.male_profile.profile_body = txt(safe.male_profile.profile_body, "暂无男主档案，建议重试获取完整背景。\n\n（系统兜底内容）");
+  safe.male_profile.profile_body = txt(safe.male_profile.profile_body, "他早期在高压环境中形成了强控制与高警觉并存的生存策略：对外执行力强、情绪收束严，对内却长期压抑真实需求。与MC的接触迫使他从‘单点生存’转向‘双人协商’，这会让他在关系里暴露软肋，也逼迫他重写价值排序。该角色的核心矛盾不是爱不爱，而是能否在不失去自我边界的前提下承担亲密关系的现实代价。");
 
   if (!Array.isArray(safe.axis_mapping)) safe.axis_mapping = [];
   safe.axis_mapping = safe.axis_mapping.map((x) => String(x || "").trim()).filter(Boolean);
