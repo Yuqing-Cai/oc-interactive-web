@@ -247,9 +247,9 @@ async function runGeneration(body, env, hooks = {}) {
 
   mark("upstream_response_received");
   const data = await upstream.json();
-  const rawContent = data?.choices?.[0]?.message?.content;
+  const rawContent = extractModelContent(data);
   if (!rawContent) {
-    const e = new Error("No content in model response.");
+    const e = new Error(`No content in model response. shape=${JSON.stringify(Object.keys(data || {})).slice(0, 200)}`);
     e.status = 502;
     throw e;
   }
@@ -797,6 +797,32 @@ function extractInstinctFromText(text) {
   const found = mapped.match(/\bsp\b|\bsx\b|\bso\b/g) || [];
   if (found.length >= 2) return `${found[0]}/${found[1]}`;
   if (found.length === 1) return `${found[0]}/sx`;
+  return "";
+}
+
+function extractModelContent(data) {
+  const choice = data?.choices?.[0] || data?.data?.choices?.[0] || null;
+  const msg = choice?.message || {};
+
+  const cands = [
+    msg?.content,
+    choice?.content,
+    data?.output_text,
+    data?.text,
+    data?.result,
+  ];
+
+  for (const c of cands) {
+    const t = normalizeTextField(c);
+    if (t) return t;
+  }
+
+  // 兼容内容块数组
+  if (Array.isArray(msg?.content)) {
+    const joined = msg.content.map((x) => normalizeTextField(x?.text || x?.content || x)).join("\n").trim();
+    if (joined) return joined;
+  }
+
   return "";
 }
 
