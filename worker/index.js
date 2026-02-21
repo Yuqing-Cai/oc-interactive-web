@@ -779,7 +779,13 @@ function synthesizeFieldFromRaw(raw, key, minLen = 80) {
 }
 
 function normalizeTextField(value) {
-  if (typeof value === "string") return value.trim();
+  if (typeof value === "string") {
+    return value
+      .replace(/```[\s\S]*?```/g, (m) => m.replace(/```(?:json|markdown|md|txt)?/gi, "").replace(/```/g, "").trim())
+      .replace(/```+/g, "")
+      .replace(/^\s*(json|markdown)\s*$/gim, "")
+      .trim();
+  }
   if (value == null) return "";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map((x) => normalizeTextField(x)).filter(Boolean).join("\n").trim();
