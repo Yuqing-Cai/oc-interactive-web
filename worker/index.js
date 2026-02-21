@@ -1141,12 +1141,7 @@ function buildEmergencyResult(body = {}, reason = "timeout") {
   const selections = Array.isArray(body?.selections) ? body.selections : [];
   const mode = detectMode(selections);
   const safeReason = normalizeEmergencyReason(reason);
-  const raw = "";
-  const shaped = enforceTemplateShape(
-    synthesizeStructuredFromRaw(raw, mode, selections, String(body?.extraPrompt || "")),
-    mode,
-    selections
-  );
+  const shaped = buildEmergencyStructured(mode, selections, String(body?.extraPrompt || ""));
 
   return {
     content: renderStructuredMarkdown(shaped, mode),
@@ -1169,6 +1164,51 @@ function normalizeEmergencyReason(reason) {
   if (src.includes("json")) return "parse_failed";
   if (src.includes("upstream")) return "upstream_error";
   return "degraded";
+}
+
+function buildEmergencyStructured(mode, selections = [], extraPrompt = "") {
+  const picked = (Array.isArray(selections) ? selections : []).slice(0, 6);
+  const pickedText = picked.length
+    ? picked.map((s) => `${s.axis}轴(${s.option})`).join("、")
+    : "已选轴";
+  const extra = String(extraPrompt || "").trim();
+
+  const base = {
+    overview: `这是降级兜底版本：围绕${pickedText}构建单一男主实现，先保证关系动力、现实阻力与人物选择三层闭环，再留出下一轮精修空间。`,
+    male_profile: {
+      mbti: "INTJ",
+      enneagram: "5w4",
+      instinctual_variant: "sp/sx",
+      profile_body: [
+        "他在长期高压与规则环境中形成了强控制与高警觉并存的生存结构：对外克制、执行力强、风险前置；对内却长期压抑真实需求，情绪表达偏迟滞。",
+        "过去经历让他把“稳定”看得高于一切，因此在亲密关系里常以边界管理代替直接示弱。与MC相遇后，他的行为从单点自保转向双人协商：仍坚持现实判断，但开始学习让渡、信任与共同承担。",
+        extra ? `补充约束已吸收：${extra}。` : "当前版本优先可读与一致性，细节风格将在后续重生成中增强。",
+      ].join(""),
+    },
+    world_slice: "世界层面处于持续摩擦态：秩序压力与个人欲望并存，关系推进必须支付现实成本，因此每一次靠近都伴随风险评估与代价累积。",
+    mc_intel: "MC当前能看到的是可靠与克制，看不到的是男主对失控的恐惧与对关系代价的预判；这种信息差会驱动后续冲突与确认节奏。",
+    relationship_dynamics: "关系初态并非纯甜或纯虐，而是吸引与防御并行：靠近会触发边界协商，边界被尊重时亲密推进，边界被误读时冲突放大。",
+    axis_mapping: picked.length
+      ? picked.map((s) => `围绕${s.axis}轴（${s.option}）做中度映射，保持与其他轴同向，不反向抵消。`)
+      : [
+          "围绕已选轴建立人物动机、关系拉扯与现实代价的三层联动。",
+          "优先保证结构可用，再做文风和冲突强度优化。",
+          "避免模板式堆砌，强调因果链连续性。",
+          "保留后续重生成扩展空间。",
+        ],
+    tradeoff_notes: "本版为稳定兜底稿：优先确保可读、完整与约束一致，暂不追求极致文风。",
+    regen_suggestion: extra
+      ? `下轮建议保留“${extra.slice(0, 80)}”并补充禁写项与开场镜头关键词。`
+      : "下轮建议补充禁写项、冲突阈值和开场场景关键词以提升贴脸度。",
+    opening_scene: "雨夜里，风把霓虹切成碎片。我站在檐下看他从街角走来，脚步很稳，像先把所有风险都算过一遍。他停在一步之外，没有碰我，也没有先解释迟到，只低声问：‘你现在最需要我做什么？’那一瞬我忽然明白，他不是不会表达，而是每一次靠近都要先穿过现实这道门。我们要面对的从来不只是喜欢与否，而是谁愿意先承认：这段关系天生带着代价。",
+  };
+
+  if (mode === "timeline") {
+    base.timeline = "第一幕建立关系与现实阻力；第二幕误读叠加并支付代价；第三幕做出不可逆选择并完成终局回收。";
+    base.ending_payoff = "终局与已选终局相关轴同向兑现：明确谁失去什么、关系保留什么、代价如何落地。";
+  }
+
+  return enforceTemplateShape(base, mode, selections);
 }
 
 function renderStructuredMarkdown(obj, mode) {
