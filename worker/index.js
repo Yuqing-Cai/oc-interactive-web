@@ -268,12 +268,17 @@ async function runGeneration(body, env, hooks = {}) {
     e.status = 502;
     throw e;
   }
+  const cleanedRawContent = sanitizeModelRawContent(rawContent);
+  if (cleanedRawContent !== rawContent) {
+    repaired = true;
+    mark("reasoning_scaffold_removed");
+  }
 
-  let structured = parseStructuredOutput(rawContent, mode);
+  let structured = parseStructuredOutput(cleanedRawContent, mode);
   if (!structured.ok) {
     mark("structured_parse_failed", { reason: structured.reason });
 
-    const narrativeObj = tryParseNarrativeOutput(rawContent, mode, null);
+    const narrativeObj = tryParseNarrativeOutput(cleanedRawContent, mode, null);
     if (narrativeObj) {
       const parsedNarrative = parseStructuredOutput(narrativeObj, mode);
       if (parsedNarrative.ok) {
@@ -285,7 +290,7 @@ async function runGeneration(body, env, hooks = {}) {
 
     if (!structured.ok) {
       const parseFailReason = structured.reason || "parse_failed";
-      const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
+      const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, cleanedRawContent, mode);
       if (coerced) {
         structured = { ok: true, value: coerced };
         repaired = true;
@@ -293,7 +298,7 @@ async function runGeneration(body, env, hooks = {}) {
       } else {
         structured = {
           ok: true,
-          value: synthesizeStructuredFromRaw(rawContent, mode, selections, extraPrompt),
+          value: synthesizeStructuredFromRaw(cleanedRawContent, mode, selections, extraPrompt),
         };
         repaired = true;
         mark("structured_parse_fallback_applied", { reason: parseFailReason });
@@ -317,17 +322,11 @@ async function runGeneration(body, env, hooks = {}) {
       mark("alignment_local_repair_applied", { round: 1 });
     } else {
       mark("alignment_repair_started", { round: 2 });
-      const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, finalUserPrompt, structured.value, issues, mode);
-      if (repairedObj) {
-        structured = { ok: true, value: repairedObj };
-        repaired = true;
-        mark("alignment_repair_applied", { round: 2 });
-      } else {
-        mark("alignment_repair_failed", { round: 2 });
-        structured = { ok: true, value: repairStructuredFieldsLocally(structured.value, mode, selections) };
-        repaired = true;
-        issues = [];
-      }
+      // 二次模型重写在高峰期极易触发长尾超时，先采用本地字段修复以保证稳定可用。
+      structured = { ok: true, value: repairStructuredFieldsLocally(structured.value, mode, selections) };
+      repaired = true;
+      issues = [];
+      mark("alignment_repair_applied", { round: 2, strategy: "local_only" });
 
       mark("alignment_check_started", { round: 2, maxAlignRounds: 2, enableModelAudit: false });
       issues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
@@ -446,15 +445,16 @@ function buildUserPrompt(selections, extraPrompt, mode) {
 function repairStructuredFieldsLocally(obj, mode, selections = []) {
   const safe = JSON.parse(JSON.stringify(obj || {}));
   const scrubName = (s) => String(s || "").replace(/(她叫|名叫|名字是|MC叫|女主叫)[^，。；\n]*/g, "她");
+  const scrubReasoning = (s) => stripReasoningScaffold(String(s || ""));
 
-  safe.overview = scrubName(safe.overview || "");
-  safe.world_slice = scrubName(safe.world_slice || "");
-  safe.mc_intel = scrubName(safe.mc_intel || "");
-  safe.relationship_dynamics = scrubName(safe.relationship_dynamics || "");
-  safe.opening_scene = scrubName(safe.opening_scene || "");
+  safe.overview = scrubName(scrubReasoning(safe.overview || ""));
+  safe.world_slice = scrubName(scrubReasoning(safe.world_slice || ""));
+  safe.mc_intel = scrubName(scrubReasoning(safe.mc_intel || ""));
+  safe.relationship_dynamics = scrubName(scrubReasoning(safe.relationship_dynamics || ""));
+  safe.opening_scene = scrubName(scrubReasoning(safe.opening_scene || ""));
 
   safe.male_profile = safe.male_profile || {};
-  safe.male_profile.profile_body = scrubName(String(safe.male_profile.profile_body || ""));
+  safe.male_profile.profile_body = scrubName(scrubReasoning(String(safe.male_profile.profile_body || "")));
 
   if (safe.male_profile.profile_body.length < 520) {
     const extra = [safe.overview, safe.world_slice, safe.relationship_dynamics].filter(Boolean).join("\n");
@@ -499,6 +499,7 @@ function checkProgrammaticAlignment(obj, selections, extraPrompt = "") {
   ].map((x) => String(x || "")).join("\n");
 
   if (/(她叫|名叫|名字是|MC叫|女主叫)/.test(textFields)) issues.push("疑似给MC命名或显式命名描述");
+  if (looksLikeReasoningLeak(textFields)) issues.push("疑似把分析过程当成最终正文输出");
   if (String(obj?.male_profile?.profile_body || "").length < 520) issues.push("男主背景档案不够详细");
 
   const list = Array.isArray(selections) ? selections : [];
@@ -732,19 +733,18 @@ function synthesizeStructuredFromRaw(raw, mode, selections = [], extraPrompt = "
   const picked = (Array.isArray(selections) ? selections : []).slice(0, 6);
   const axisMapping = picked
     .map((s) => `围绕${s.axis}轴（${s.option}）进行中度映射，保持与补充提示词一致。`);
-  const pickedSummary = picked.map((s) => `${s.axis}:${s.option}`).join("；");
 
   const obj = {
-    overview: synthesizeFieldFromRaw(`${raw}\n已选轴：${pickedSummary}`, "overview", 180),
+    overview: synthesizeFieldFromRaw(raw, "overview", 180),
     male_profile: {
       mbti: extractMbtiFromText(raw) || "INTJ",
       enneagram: extractEnneagramFromText(raw) || "5w4",
       instinctual_variant: extractInstinctFromText(raw) || "sp/sx",
       profile_body: synthesizeFieldFromRaw(`${raw}\n${extraPrompt}`, "profile_body", mode === "timeline" ? 720 : 560),
     },
-    world_slice: synthesizeFieldFromRaw(`${raw}\n已选轴：${pickedSummary}`, "world_slice", 140),
+    world_slice: synthesizeFieldFromRaw(raw, "world_slice", 140),
     mc_intel: synthesizeFieldFromRaw(`${raw}\n补充偏好：${extraPrompt}`, "mc_intel", 120),
-    relationship_dynamics: synthesizeFieldFromRaw(`${raw}\n已选轴：${pickedSummary}`, "relationship_dynamics", 130),
+    relationship_dynamics: synthesizeFieldFromRaw(raw, "relationship_dynamics", 130),
     axis_mapping: axisMapping.length ? axisMapping : [
       "围绕已选轴构建角色动机与关系冲突，避免反向设定。",
       "保持世界阻力—个人选择—关系代价三层联动。",
@@ -765,7 +765,7 @@ function synthesizeStructuredFromRaw(raw, mode, selections = [], extraPrompt = "
 }
 
 function synthesizeFieldFromRaw(raw, key, minLen = 80) {
-  const base = normalizeTextField(raw)
+  const base = normalizeTextField(sanitizeModelRawContent(raw))
     .replace(/```[\s\S]*?```/g, "")
     .replace(/[{}\[\]"]/g, " ")
     .replace(/\s+/g, " ")
@@ -784,20 +784,39 @@ function synthesizeFieldFromRaw(raw, key, minLen = 80) {
     ending_payoff: "终局强调情感与现实双重回收：关系走向与已选终局轴一致，代价被明确命名且不被粉饰。",
   };
 
+  const fillerByKey = {
+    overview: "本稿优先保证设定逻辑闭环，细节风格与冲突强度可在后续重生成中继续拉高。",
+    world_slice: "这种外部压力并非背景装饰，而会持续改写角色选择与关系推进节奏。",
+    mc_intel: "信息差不会一次性摊开，而会在关键节点以行为证据逐步揭示。",
+    relationship_dynamics: "关系张力来自边界协商与现实代价同步增长，而非单点情绪爆发。",
+    tradeoff_notes: "取舍重点是可读性、稳定性和设定一致性。",
+    regen_suggestion: "下轮可补充禁写项和开场镜头关键词。",
+    opening_scene: "镜头建议保持动作证据优先，让情绪在细节里慢慢抬升。",
+    profile_body: "建议在下一轮补充职业细节、创伤触发点与关键关系事件，以增强立体度。",
+    timeline: "三幕结构可继续细化到具体节点事件与代价回收。",
+    ending_payoff: "终局可增加选择后果与关系状态的双线回收。",
+  };
+
   const seed = (base || fallbackByKey[key] || fallbackByKey.overview || "").trim();
   if (seed.length >= minLen) return seed;
   let out = seed;
-  while (out.length < minLen) out += ` ${fallbackByKey[key] || fallbackByKey.overview}`;
+  let guard = 0;
+  while (out.length < minLen && guard < 6) {
+    out += ` ${fillerByKey[key] || fillerByKey.overview}`;
+    guard += 1;
+  }
   return out.trim();
 }
 
 function normalizeTextField(value) {
   if (typeof value === "string") {
-    return value
+    return sanitizeModelRawContent(
+      value
       .replace(/```[\s\S]*?```/g, (m) => m.replace(/```(?:json|markdown|md|txt)?/gi, "").replace(/```/g, "").trim())
       .replace(/```+/g, "")
       .replace(/^\s*(json|markdown)\s*$/gim, "")
-      .trim();
+      .trim()
+    );
   }
   if (value == null) return "";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -812,6 +831,47 @@ function normalizeTextField(value) {
     }
   }
   return "";
+}
+
+function looksLikeReasoningLeak(text) {
+  const src = String(text || "");
+  if (!src.trim()) return false;
+  const markers = [
+    "分析用户请求",
+    "解构并综合",
+    "思维沙盘",
+    "对照约束进行最终审查",
+    "构建 JSON",
+    "完善 JSON 结构",
+    "起草档案字段",
+    "撰写 profile_body",
+    "输出格式： 严格的 JSON 对象",
+  ];
+  const markerHits = markers.reduce((n, k) => n + (src.includes(k) ? 1 : 0), 0);
+  const numberedBlocks = (src.match(/(^|\n)\s*\d+\.\s+/g) || []).length;
+  return markerHits >= 2 || (markerHits >= 1 && numberedBlocks >= 4);
+}
+
+function stripReasoningScaffold(text) {
+  if (!text) return "";
+  let out = String(text);
+
+  // 典型“先分析再输出”脚手架段落，直接移除
+  out = out
+    .replace(/(^|\n)\s*\d+\.\s*(分析用户请求|解构并综合角色概念|起草档案字段|完善 JSON 结构|撰写 profile_body|对照约束进行最终审查|构建 JSON)[\s\S]*?(?=(\n\s*\d+\.\s)|$)/g, "\n")
+    .replace(/(^|\n)\s*(角色：|输出格式：|目标：|硬约束：|映射规则：|模式：|补充约束：).*/g, "\n");
+
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}
+
+function sanitizeModelRawContent(text) {
+  const src = String(text || "");
+  if (!src.trim()) return "";
+  const stripped = stripReasoningScaffold(src);
+  if (!stripped.trim()) return "";
+  if (looksLikeReasoningLeak(stripped)) return "";
+  return stripped;
 }
 
 function normalizeMbti(value) {
@@ -1080,7 +1140,8 @@ function enforceTemplateShape(obj, mode, selections = []) {
 function buildEmergencyResult(body = {}, reason = "timeout") {
   const selections = Array.isArray(body?.selections) ? body.selections : [];
   const mode = detectMode(selections);
-  const raw = `系统降级输出（${reason}）。${String(body?.extraPrompt || "")}`;
+  const safeReason = normalizeEmergencyReason(reason);
+  const raw = "";
   const shaped = enforceTemplateShape(
     synthesizeStructuredFromRaw(raw, mode, selections, String(body?.extraPrompt || "")),
     mode,
@@ -1092,12 +1153,22 @@ function buildEmergencyResult(body = {}, reason = "timeout") {
     meta: {
       mode,
       repaired: true,
-      trace: [{ stage: "emergency_fallback", t: 0, reason }],
+      trace: [{ stage: "emergency_fallback", t: 0, reason: safeReason }],
       totalMs: 0,
       finalModel: "emergency-local",
       fallbackUsed: true,
     },
   };
+}
+
+function normalizeEmergencyReason(reason) {
+  const src = String(reason || "").toLowerCase();
+  if (!src) return "degraded";
+  if (src.includes("timeout")) return "timeout";
+  if (src.includes("no content")) return "no_content";
+  if (src.includes("json")) return "parse_failed";
+  if (src.includes("upstream")) return "upstream_error";
+  return "degraded";
 }
 
 function renderStructuredMarkdown(obj, mode) {
