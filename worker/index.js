@@ -22,11 +22,16 @@ export default {
 };
 
 async function handleGenerateJson(request, env) {
+  let body = {};
   try {
-    const body = await request.json();
+    body = await request.json();
     const result = await runGeneration(body, env);
     return json({ content: result.content, meta: result.meta }, 200);
   } catch (err) {
+    if (err?.name === "TimeoutError") {
+      const emergency = buildEmergencyResult(body, `timeout:${err?.message || "upstream"}`);
+      return json({ content: emergency.content, meta: emergency.meta }, 200);
+    }
     return mapErrorToResponse(err);
   }
 }
@@ -73,8 +78,13 @@ async function handleGenerateStream(request, env, ctx) {
         meta: result.meta,
       });
     } catch (err) {
-      const mapped = mapError(err);
-      await send({ type: "error", error: mapped.message, code: mapped.code || "GEN_ERROR" });
+      if (err?.name === "TimeoutError") {
+        const emergency = buildEmergencyResult(body, `timeout:${err?.message || "upstream"}`);
+        await send({ type: "done", content: emergency.content, meta: emergency.meta });
+      } else {
+        const mapped = mapError(err);
+        await send({ type: "error", error: mapped.message, code: mapped.code || "GEN_ERROR" });
+      }
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       await close();
@@ -1046,6 +1056,29 @@ function enforceTemplateShape(obj, mode, selections = []) {
   }
 
   return safe;
+}
+
+function buildEmergencyResult(body = {}, reason = "timeout") {
+  const selections = Array.isArray(body?.selections) ? body.selections : [];
+  const mode = detectMode(selections);
+  const raw = `系统降级输出（${reason}）。${String(body?.extraPrompt || "")}`;
+  const shaped = enforceTemplateShape(
+    synthesizeStructuredFromRaw(raw, mode, selections, String(body?.extraPrompt || "")),
+    mode,
+    selections
+  );
+
+  return {
+    content: renderStructuredMarkdown(shaped, mode),
+    meta: {
+      mode,
+      repaired: true,
+      trace: [{ stage: "emergency_fallback", t: 0, reason }],
+      totalMs: 0,
+      finalModel: "emergency-local",
+      fallbackUsed: true,
+    },
+  };
 }
 
 function renderStructuredMarkdown(obj, mode) {
