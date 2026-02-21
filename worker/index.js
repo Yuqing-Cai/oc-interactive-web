@@ -186,7 +186,7 @@ async function runGeneration(body, env, hooks = {}) {
   const payload = {
     model,
     temperature: 0.62,
-    max_tokens: mode === "timeline" ? 3400 : 2700,
+    max_tokens: mode === "timeline" ? 2200 : 1600,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -852,7 +852,7 @@ async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
       body: JSON.stringify({
         model,
         temperature: 0.2,
-        max_tokens: mode === "timeline" ? 3800 : 2800,
+        max_tokens: mode === "timeline" ? 2400 : 1700,
         response_format: {
           type: "json_schema",
           json_schema: {
@@ -890,7 +890,7 @@ async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPro
       body: JSON.stringify({
         model,
         temperature: 0.45,
-        max_tokens: mode === "timeline" ? 3400 : 2600,
+        max_tokens: mode === "timeline" ? 2200 : 1600,
         response_format: {
           type: "json_schema",
           json_schema: {
