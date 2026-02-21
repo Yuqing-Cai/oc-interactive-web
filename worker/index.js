@@ -28,8 +28,8 @@ async function handleGenerateJson(request, env) {
     const result = await runGeneration(body, env);
     return json({ content: result.content, meta: result.meta }, 200);
   } catch (err) {
-    if (err?.name === "TimeoutError") {
-      const emergency = buildEmergencyResult(body, `timeout:${err?.message || "upstream"}`);
+    if (shouldEmergencyFallback(err)) {
+      const emergency = buildEmergencyResult(body, `degraded:${err?.name || "error"}:${err?.message || "upstream"}`);
       return json({ content: emergency.content, meta: emergency.meta }, 200);
     }
     return mapErrorToResponse(err);
@@ -78,8 +78,8 @@ async function handleGenerateStream(request, env, ctx) {
         meta: result.meta,
       });
     } catch (err) {
-      if (err?.name === "TimeoutError") {
-        const emergency = buildEmergencyResult(body, `timeout:${err?.message || "upstream"}`);
+      if (shouldEmergencyFallback(err)) {
+        const emergency = buildEmergencyResult(body, `degraded:${err?.name || "error"}:${err?.message || "upstream"}`);
         await send({ type: "done", content: emergency.content, meta: emergency.meta });
       } else {
         const mapped = mapError(err);
@@ -318,16 +318,16 @@ async function runGeneration(body, env, hooks = {}) {
     } else {
       mark("alignment_repair_started", { round: 2 });
       const repairedObj = await regenerateWithIssues(apiUrl, apiKey, finalModel, systemPrompt, finalUserPrompt, structured.value, issues, mode);
-      if (!repairedObj) {
+      if (repairedObj) {
+        structured = { ok: true, value: repairedObj };
+        repaired = true;
+        mark("alignment_repair_applied", { round: 2 });
+      } else {
         mark("alignment_repair_failed", { round: 2 });
         structured = { ok: true, value: repairStructuredFieldsLocally(structured.value, mode, selections) };
         repaired = true;
         issues = [];
       }
-
-      structured = { ok: true, value: repairedObj };
-      repaired = true;
-      mark("alignment_repair_applied", { round: 2 });
 
       mark("alignment_check_started", { round: 2, maxAlignRounds: 2, enableModelAudit: false });
       issues = checkProgrammaticAlignment(structured.value, selections, extraPrompt);
@@ -382,6 +382,18 @@ function mapError(err) {
     code: err?.code || "UNEXPECTED_ERROR",
     message: err?.message || "Unexpected error",
   };
+}
+
+function shouldEmergencyFallback(err) {
+  if (!err) return true;
+  if (err?.name === "TimeoutError") return true;
+
+  const status = Number(err?.status || 500);
+  if (status >= 500) return true;
+  if ([408, 409, 429, 520, 522, 524].includes(status)) return true;
+  // 参数校验错误（如少于3项选择）保留给前端显式提示，不走应急内容。
+  if (status >= 400 && status < 500) return false;
+  return true;
 }
 
 function mapErrorToResponse(err) {

@@ -98,6 +98,7 @@ const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
 const FIXED_MODEL = "glm-5";
+const REQUEST_TIMEOUT_MS = 75000;
 const DEBUG_TRACE = new URLSearchParams(window.location.search).get("debug") === "1";
 const defaultTheme = "cyan";
 if (themeSelect) {
@@ -283,66 +284,62 @@ async function generate(isRegenerate) {
   const timer = setInterval(updateProgress, 500);
 
   try {
-    const requestCtrl = new AbortController();
-    // 不再在前端做硬超时中断，避免把长生成误判为失败。
-    // 若需手动中止，后续可增加“取消生成”按钮来触发 requestCtrl.abort()。
-
-    const response = await fetch(streamUrl, {
-      method: "POST",
-      body: JSON.stringify({ selections, model, extraPrompt }),
-      signal: requestCtrl.signal,
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(text || `HTTP ${response.status}`);
-    }
-
-    if (!response.body) throw new Error("流式响应不可用。");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const payload = { selections, model, extraPrompt };
     let finalContent = "";
     let finalMeta = null;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-
-      for (const block of parts) {
-        const line = block.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-
-        let evt = null;
-        try {
-          evt = JSON.parse(line.slice(5).trim());
-        } catch {
-          continue;
-        }
-
-        if (evt?.type === "stage") {
-          liveTrace.push({ stage: evt.stage, t: evt.t || 0 });
+    try {
+      const streamResult = await requestGenerateStream(
+        streamUrl,
+        payload,
+        (stage) => {
+          liveTrace.push(stage);
           if (thinkingContentEl) {
             const elapsedMs = Math.max(100, performance.now() - startedAt);
             thinkingContentEl.innerHTML = formatTrace(liveTrace, false, mode, elapsedMs, {}, elapsedMs);
           }
-        } else if (evt?.type === "ping") {
-          // 心跳包：用于保持流连接活性，前端无需额外渲染。
-        } else if (evt?.type === "done") {
-          finalContent = evt.content || "";
-          finalMeta = evt.meta || null;
-        } else if (evt?.type === "error") {
-          throw new Error(evt.error || "流式生成失败");
-        }
+        },
+        REQUEST_TIMEOUT_MS
+      );
+      finalContent = streamResult.content;
+      finalMeta = streamResult.meta || null;
+    } catch (streamErr) {
+      setStatus("流式链路异常，正在切换稳态通道…", false);
+      liveTrace.push({ stage: "stream_failed_fallback_json", t: Math.floor(performance.now() - startedAt) });
+      if (thinkingContentEl) {
+        const elapsedMs = Math.max(100, performance.now() - startedAt);
+        thinkingContentEl.innerHTML = formatTrace(liveTrace, true, mode, elapsedMs, {}, elapsedMs);
+      }
+
+      try {
+        const jsonResult = await requestGenerateJson(apiUrl, payload, REQUEST_TIMEOUT_MS);
+        finalContent = jsonResult.content || "";
+        finalMeta = jsonResult.meta || null;
+      } catch {
+        liveTrace.push({ stage: "json_failed_fallback_local", t: Math.floor(performance.now() - startedAt) });
+        finalContent = buildLocalEmergencyContent(selections, extraPrompt, mode);
+        finalMeta = {
+          mode,
+          repaired: true,
+          trace: liveTrace,
+          totalMs: Math.floor(performance.now() - startedAt),
+          finalModel: "frontend-local-fallback",
+          fallbackUsed: true,
+        };
       }
     }
 
-    if (!finalContent) throw new Error("服务端未返回最终内容。请重试。");
+    if (!finalContent) {
+      finalContent = buildLocalEmergencyContent(selections, extraPrompt, mode);
+      finalMeta = finalMeta || {
+        mode,
+        repaired: true,
+        trace: liveTrace,
+        totalMs: Math.floor(performance.now() - startedAt),
+        finalModel: "frontend-local-fallback",
+        fallbackUsed: true,
+      };
+    }
 
     resultEl.innerHTML = renderResultContent(finalContent);
     const seconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
@@ -375,6 +372,152 @@ async function generate(isRegenerate) {
     clearInterval(timer);
     setLoading(false);
   }
+}
+
+async function requestGenerateStream(streamUrl, payload, onStage, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const requestCtrl = new AbortController();
+  const timer = setTimeout(() => requestCtrl.abort(), timeoutMs);
+  try {
+    const response = await fetch(streamUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: requestCtrl.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    if (!response.body) throw new Error("流式响应不可用。");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalContent = "";
+    let finalMeta = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const block of parts) {
+        const line = block.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+
+        let evt = null;
+        try {
+          evt = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+
+        if (evt?.type === "stage") {
+          onStage?.({ stage: evt.stage, t: evt.t || 0 });
+        } else if (evt?.type === "done") {
+          finalContent = evt.content || "";
+          finalMeta = evt.meta || null;
+        } else if (evt?.type === "error") {
+          throw new Error(evt.error || "流式生成失败");
+        }
+      }
+    }
+
+    if (!finalContent) throw new Error("流式返回中没有最终内容");
+    return { content: finalContent, meta: finalMeta };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function requestGenerateJson(apiUrl, payload, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const requestCtrl = new AbortController();
+  const timer = setTimeout(() => requestCtrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: requestCtrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data?.content) throw new Error("JSON 通道返回为空");
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildLocalEmergencyContent(selections = [], extraPrompt = "", mode = "opening") {
+  const picks = (Array.isArray(selections) ? selections : []).slice(0, 6);
+  const mappings = picks.length
+    ? picks.map((s) => `- 围绕${s.axis}轴（${s.option}）保持中度映射，避免反向偏离。`).join("\n")
+    : "- 以角色动机、世界阻力、关系代价三层联动为主。\n- 先保证一致性，再逐轮细化风格。";
+  const extra = String(extraPrompt || "").trim();
+
+  const common = [
+    "1) 设定总览（玩家上帝视角）",
+    "本次结果触发前端应急兜底：核心目标是保证你能拿到可用骨架，而不是空白或报错。",
+    "",
+    "2) 男主完整档案（玩家上帝视角）",
+    "MBTI：INTJ",
+    "九型人格：5w4",
+    "副型：sp/sx",
+    "他在长期高压环境下形成了强控制与高警觉并存的生存策略。对外表现为克制、执行力强、边界清晰；对内则长期压抑真实需求，在亲密关系中容易出现先防御后投入的行为轨迹。与MC的关系会迫使他把‘风险最小化’思路调整为‘愿意共同承担代价’，这也是角色最核心的成长张力。",
+    "",
+    "3) 世界观与时代切片（玩家上帝视角）",
+    "世界层面处于持续摩擦态：外部秩序与个体选择互相挤压，关系推进必须支付现实成本。",
+    "",
+    "4) MC视角情报（她知道 / 不知道）",
+    "她知道他可靠但难以示弱；她不知道的是，他已经在暗中重排了自己的价值优先级。",
+    "",
+    "5) 关系初始动力学（此刻已成立）",
+    "吸引与防御并行，靠近会触发边界测试；边界被尊重时亲密会加速，边界被误读时冲突会放大。",
+    "",
+  ];
+
+  const tail = mode === "timeline"
+    ? [
+        "6) 三幕时间线骨架（细节留白）",
+        "第一幕建立关系与外部压力；第二幕误读叠加并支付代价；第三幕做出不可逆选择并兑现终局。",
+        "",
+        "7) 终局兑现说明（与F/X/T/G相关轴对齐）",
+        "终局方向与已选终局轴保持同向，明确谁失去什么、关系保留什么。",
+        "",
+        "8) 选轴映射说明",
+        mappings,
+        "",
+        "9) 矛盾度与取舍说明",
+        "当前版本优先可用性与一致性，细节美术风格可在下一轮重生成中增强。",
+        "",
+        "10) 下次重生成建议",
+        extra ? `优先落实你的补充偏好：${extra.slice(0, 120)}。` : "补充禁写项、开场镜头关键词和互动边界词，贴脸度会明显提升。",
+        "",
+        "11) 开场片段（250~450字，MC第一视角）",
+        "雨线斜着打在路灯上，我看见他从对街走过来，脚步很稳，像已经把所有风险都算过一遍。他在我面前停下，没有马上解释为什么晚到，只先确认一句：‘你现在最需要我做什么？’那一刻我突然意识到，他不是不会表达，只是每一次表达都先过现实那一关。我们之间的难处从来不是不相爱，而是谁先承认，爱这件事本身就带着代价。",
+      ]
+    : [
+        "6) 选轴映射说明",
+        mappings,
+        "",
+        "7) 矛盾度与取舍说明",
+        "当前版本优先可用性与结构稳定，细节风格可继续加压。",
+        "",
+        "8) 下次重生成建议",
+        extra ? `优先落实你的补充偏好：${extra.slice(0, 120)}。` : "补充年龄/外观/禁写项/开场场景后，文本会更贴脸。",
+        "",
+        "9) 开场片段（300~500字，MC第一视角）",
+        "夜里风很硬，巷口的霓虹把人影切得忽明忽暗。我本来以为他会像以前那样先把话咽回去，结果他站在我面前，手指在口袋里攥了攥，还是低声开口：‘我不是来证明自己正确的。’他说这句的时候没看我，像在和某个更久远的自己较劲。等他终于抬眼，我看见那层一贯的冷静下面，其实有很明显的疲惫和迟疑。那一瞬间我明白，我们要面对的不是一场漂亮的恋爱，而是一段需要反复协商边界、反复确认信任的关系。可也正因为这样，他每一次向前走半步，都比任何誓言更重。",
+      ];
+
+  return [...common, ...tail].join("\n");
 }
 
 function setLoading(loading) {
@@ -414,6 +557,8 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     alignment_repair_started: "按问题重写中",
     alignment_repair_applied: "重写已应用",
     alignment_repair_failed: "重写失败",
+    stream_failed_fallback_json: "流式失败，切换稳态通道",
+    json_failed_fallback_local: "稳态通道失败，启用本地应急",
     upstream_error: "模型请求失败",
     completed: "生成完成",
   };
