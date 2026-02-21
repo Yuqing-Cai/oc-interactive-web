@@ -218,13 +218,17 @@ async function runGeneration(body, env, hooks = {}) {
 
   const primaryTimeoutMs = Number(env.PRIMARY_TIMEOUT_MS || 85000);
   const fallbackTimeoutMs = Number(env.FALLBACK_TIMEOUT_MS || 70000);
+  const primaryRetries = Math.max(0, Number(env.PRIMARY_RETRIES || 1));
 
   mark("upstream_request_started", { model });
   let upstream = null;
   let primaryTimeout = false;
 
   try {
-    upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, { timeoutMs: boundedTimeout(primaryTimeoutMs, 2500, 5000), retries: 0 });
+    upstream = await requestWithTransientRetries(apiUrl, apiKey, payload, {
+      timeoutMs: boundedTimeout(primaryTimeoutMs, 2500, 5000),
+      retries: primaryRetries,
+    });
   } catch (err) {
     if (err?.name === "TimeoutError") {
       primaryTimeout = true;

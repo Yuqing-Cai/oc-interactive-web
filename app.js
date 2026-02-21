@@ -98,7 +98,8 @@ const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
 const FIXED_MODEL = "glm-5";
-const REQUEST_TIMEOUT_MS = 140000;
+// 0 = 不在前端主动超时中断，等待服务端/网络链路自然返回
+const REQUEST_TIMEOUT_MS = 0;
 const DEBUG_TRACE = new URLSearchParams(window.location.search).get("debug") === "1";
 const defaultTheme = "cyan";
 if (themeSelect) {
@@ -360,7 +361,7 @@ async function generate(isRegenerate) {
 
 async function requestGenerateStream(streamUrl, payload, onStage, timeoutMs = REQUEST_TIMEOUT_MS) {
   const requestCtrl = new AbortController();
-  const timer = setTimeout(() => requestCtrl.abort(), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => requestCtrl.abort(), timeoutMs) : null;
   try {
     const response = await fetch(streamUrl, {
       method: "POST",
@@ -413,13 +414,13 @@ async function requestGenerateStream(streamUrl, payload, onStage, timeoutMs = RE
     if (!finalContent) throw new Error("流式返回中没有最终内容");
     return { content: finalContent, meta: finalMeta };
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
 async function requestGenerateJson(apiUrl, payload, timeoutMs = REQUEST_TIMEOUT_MS) {
   const requestCtrl = new AbortController();
-  const timer = setTimeout(() => requestCtrl.abort(), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => requestCtrl.abort(), timeoutMs) : null;
   try {
     const res = await fetch(apiUrl, {
       method: "POST",
@@ -435,7 +436,7 @@ async function requestGenerateJson(apiUrl, payload, timeoutMs = REQUEST_TIMEOUT_
     if (!data?.content) throw new Error("JSON 通道返回为空");
     return data;
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
