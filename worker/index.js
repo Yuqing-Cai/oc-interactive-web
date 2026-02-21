@@ -105,6 +105,55 @@ async function handleGenerateStream(request, env, ctx) {
 }
 
 async function runGeneration(body, env, hooks = {}) {
+  const providers = buildProviderChain(body, env);
+  let lastErr = null;
+
+  for (let i = 0; i < providers.length; i++) {
+    const p = providers[i];
+    if (!p?.key) continue;
+
+    try {
+      if (hooks.onStage) {
+        hooks.onStage({ stage: "provider_attempt_started", provider: p.name, model: p.model, t: 0 });
+      }
+
+      const envForProvider = {
+        ...env,
+        OPENAI_API_URL: p.url,
+        OPENAI_API_KEY: p.key,
+        PRIMARY_MODEL: p.model,
+        // 由外层 provider 链路控制切换；单 provider 运行时禁用内部模型回退，避免策略冲突。
+        FALLBACK_MODEL: "",
+        ALLOW_MODEL_FALLBACK: "false",
+      };
+
+      const result = await runGenerationSingle(body, envForProvider, hooks);
+      result.meta = {
+        ...(result.meta || {}),
+        provider: p.name,
+      };
+      return result;
+    } catch (err) {
+      lastErr = err;
+      const canTryNext = i < providers.length - 1 && shouldTryNextProvider(err);
+      if (!canTryNext) throw err;
+      if (hooks.onStage) {
+        hooks.onStage({
+          stage: "provider_attempt_failed",
+          provider: p.name,
+          code: err?.code || "",
+          status: Number(err?.status || 0),
+          error: err?.name || "error",
+          t: 0,
+        });
+      }
+    }
+  }
+
+  throw lastErr || new Error("No available provider");
+}
+
+async function runGenerationSingle(body, env, hooks = {}) {
   const { selections = [], model: requestedModel = "", extraPrompt = "" } = body || {};
   const model = (env.PRIMARY_MODEL || requestedModel || "glm-5").trim();
 
@@ -265,12 +314,30 @@ async function runGeneration(body, env, hooks = {}) {
   }
 
   mark("upstream_response_received");
-  const data = await upstream.json();
-  const rawContent = extractModelContent(data);
+  let data = await upstream.json();
+  let rawContent = extractModelContent(data);
   if (!rawContent) {
-    const e = new Error(`No content in model response. shape=${JSON.stringify(Object.keys(data || {})).slice(0, 200)}`);
-    e.status = 502;
-    throw e;
+    const recovered = await recoverNoContentResponse({
+      apiUrl,
+      apiKey,
+      model: finalModel,
+      systemPrompt,
+      userPrompt: finalUserPrompt,
+      mode,
+      deadline,
+      mark,
+      maxRetries: Math.max(1, Number(env.NO_CONTENT_RETRIES || 2)),
+    });
+    if (recovered) {
+      data = recovered.data || data;
+      rawContent = recovered.rawContent || "";
+      repaired = true;
+      mark("no_content_recovered");
+    } else {
+      const e = new Error(`No content in model response. shape=${JSON.stringify(Object.keys(data || {})).slice(0, 200)}`);
+      e.status = 502;
+      throw e;
+    }
   }
   const cleanedRawContent = sanitizeModelRawContent(rawContent);
   if (cleanedRawContent !== rawContent) {
@@ -359,6 +426,36 @@ async function runGeneration(body, env, hooks = {}) {
       fallbackUsed: finalModel !== model,
     },
   };
+}
+
+function buildProviderChain(body, env) {
+  const requestedModel = String(body?.model || "").trim();
+  const chain = [];
+
+  const primaryUrl = String(env.OPENAI_API_URL || "https://open.bigmodel.cn/api/paas/v4/chat/completions").trim();
+  const primaryKey = env.OPENAI_API_KEY;
+  const primaryModel = String(env.PRIMARY_MODEL || requestedModel || "glm-5").trim();
+  chain.push({ name: "glm", url: primaryUrl, key: primaryKey, model: primaryModel });
+
+  const minimaxKey = env.MINIMAX_API_KEY;
+  const minimaxUrl = String(env.MINIMAX_API_URL || "https://api.minimax.chat/v1/chat/completions").trim();
+  const minimaxModel = String(env.MINIMAX_MODEL || "MiniMax-M2.5").trim();
+  if (minimaxKey) {
+    const duplicate = chain.some((x) => x.url === minimaxUrl && x.model === minimaxModel);
+    if (!duplicate) chain.push({ name: "minimax", url: minimaxUrl, key: minimaxKey, model: minimaxModel });
+  }
+
+  return chain;
+}
+
+function shouldTryNextProvider(err) {
+  if (!err) return true;
+  if (err?.name === "TimeoutError") return true;
+  const msg = String(err?.message || "").toLowerCase();
+  if (msg.includes("no content in model response")) return true;
+  const status = Number(err?.status || 0);
+  if (!status) return true;
+  return isRetryableStatus(status);
 }
 
 function mapError(err) {
@@ -987,6 +1084,77 @@ function extractModelContent(data) {
   return "";
 }
 
+async function recoverNoContentResponse(opts) {
+  const {
+    apiUrl,
+    apiKey,
+    model,
+    systemPrompt,
+    userPrompt,
+    mode,
+    deadline,
+    mark,
+    maxRetries = 2,
+  } = opts || {};
+
+  const remainingMs = () => Math.max(0, Number(deadline || 0) - Date.now());
+  const computeTimeout = (targetMs, reserveMs = 2000, floorMs = 6000) => {
+    const r = remainingMs() - reserveMs;
+    if (r <= floorMs) return 0;
+    return Math.max(Math.min(targetMs, r), floorMs);
+  };
+
+  for (let i = 1; i <= maxRetries; i++) {
+    const timeoutMs = computeTimeout(i === 1 ? 70000 : 85000, 2000, 7000);
+    if (timeoutMs <= 0) {
+      mark?.("no_content_retry_skipped_budget", { attempt: i });
+      break;
+    }
+
+    mark?.("no_content_retry_started", { attempt: i, timeoutMs });
+    let res = null;
+    try {
+      const strictTextPrompt = [
+        userPrompt,
+        "",
+        "必须输出完整正文，不要空消息。",
+        "只输出一个 JSON 对象（不要 markdown，不要解释）。",
+      ].join("\n");
+
+      res = await requestWithTransientRetries(
+        apiUrl,
+        apiKey,
+        {
+          model,
+          temperature: i === 1 ? 0.55 : 0.45,
+          max_tokens: mode === "timeline" ? 2300 : 1700,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: strictTextPrompt },
+          ],
+        },
+        { timeoutMs, retries: 0 }
+      );
+      if (!res?.ok) {
+        mark?.("no_content_retry_failed", { attempt: i, status: res?.status || 0 });
+        continue;
+      }
+
+      const d = await res.json();
+      const c = extractModelContent(d);
+      if (c) {
+        mark?.("no_content_retry_succeeded", { attempt: i });
+        return { data: d, rawContent: c };
+      }
+      mark?.("no_content_retry_empty", { attempt: i });
+    } catch (err) {
+      mark?.("no_content_retry_failed", { attempt: i, error: err?.name || "error" });
+    }
+  }
+
+  return null;
+}
+
 function normalizeJsonLikeContent(raw) {
   if (raw == null) return "";
 
@@ -1194,48 +1362,199 @@ function normalizeEmergencyReason(reason) {
 }
 
 function buildEmergencyStructured(mode, selections = [], extraPrompt = "") {
-  const picked = (Array.isArray(selections) ? selections : []).slice(0, 6);
-  const pickedText = picked.length
-    ? picked.map((s) => `${s.axis}轴(${s.option})`).join("、")
-    : "已选轴";
+  const picked = (Array.isArray(selections) ? selections : []).slice(0, 7);
+  const infos = picked.map(normalizeSelectionInfo);
+  const byAxis = Object.fromEntries(infos.map((x) => [x.axis, x]));
+  const seed = stableSeedFromSelections(infos);
   const extra = String(extraPrompt || "").trim();
 
+  const w = byAxis.W?.code || "W3";
+  const b = byAxis.B?.code || "B1";
+  const r = byAxis.R?.code || "R3";
+  const d = byAxis.D?.code || "D2";
+  const m = byAxis.M?.code || "M2";
+  const e = byAxis.E?.code || "";
+  const v = byAxis.V?.code || "";
+
+  const worldTone = emergencyLookup(WORLD_BY_W, w, "W3");
+  const bodyTone = emergencyLookup(BODY_BY_B, b, "B1");
+  const roleTone = emergencyLookup(ROLE_BY_R, r, "R3");
+  const dynamicTone = emergencyLookup(DYNAMIC_BY_D, d, "D2");
+  const motiveTone = emergencyLookup(MOTIVE_BY_M, m, "M2");
+  const expressionTone = e ? emergencyLookup(EXPRESSION_BY_E, e, "E1") : "";
+  const gazeTone = v ? emergencyLookup(GAZE_BY_V, v, "V1") : "";
+
+  const profilePreset = emergencyProfilePreset({ d, r, m, e, v });
+  const pickedText = infos.length
+    ? infos.map((x) => `${x.axis}轴(${x.option})`).join("、")
+    : "已选轴";
+
+  const openingVariant = stablePick(OPENING_VARIANTS, seed);
+  const openingScene = [
+    openingVariant.lead.replace("{world}", worldTone.scene),
+    `他在你面前始终保持${dynamicTone.behavior}，却会在关键节点暴露出${roleTone.shadow}。`,
+    `你知道他${bodyTone.fact}，却不知道他把“${motiveTone.core}”当成了唯一不能丢的底线。`,
+    openingVariant.close,
+  ].join("");
+
+  const profileBody = [
+    `他成长在${worldTone.name}里，长期受${worldTone.pressure}塑形。`,
+    `早年的身份轨迹让他形成了${roleTone.core}，并在失序后学会以${dynamicTone.core}保护自己。`,
+    `在身体层面，他${bodyTone.fact}，这让他对风险与代价有近乎执拗的预判。`,
+    `动机上，他始终被“${motiveTone.core}”牵引；关系里则表现为${dynamicTone.behavior}。`,
+    expressionTone ? `表达方式偏向${expressionTone.style}，因此他常把真实需求藏在动作与秩序里。` : "",
+    gazeTone ? `看向MC时，他把对方当作“${gazeTone.view}”，这既是牵引也是软肋。` : "",
+    extra ? `补充约束已吸收：${extra}。` : "当前版本先保证可读与逻辑闭环，再留出下轮增强空间。",
+  ].filter(Boolean).join("");
+
+  const axisMapping = infos.length
+    ? infos.map((x) => `围绕${x.axis}轴（${x.option}）做中度映射：${axisMappingHintByAxis(x)}。`)
+    : [
+        "围绕已选轴建立人物动机、关系拉扯与现实代价三层联动。",
+        "保证过去→现在因果链连续，避免设定拼接感。",
+        "先确保结构稳定与可读，再叠加风格强化。",
+        "保留下轮重生成的细节扩展空间。",
+      ];
+
   const base = {
-    overview: `这是降级兜底版本：围绕${pickedText}构建单一男主实现，先保证关系动力、现实阻力与人物选择三层闭环，再留出下一轮精修空间。`,
+    overview: `这是稳定兜底版本：围绕${pickedText}构建单一男主实现。核心走向为“${worldTone.summary} + ${dynamicTone.summary}”，并用${bodyTone.summary}承接现实代价。`,
     male_profile: {
-      mbti: "INTJ",
-      enneagram: "5w4",
-      instinctual_variant: "sp/sx",
-      profile_body: [
-        "他在长期高压与规则环境中形成了强控制与高警觉并存的生存结构：对外克制、执行力强、风险前置；对内却长期压抑真实需求，情绪表达偏迟滞。",
-        "过去经历让他把“稳定”看得高于一切，因此在亲密关系里常以边界管理代替直接示弱。与MC相遇后，他的行为从单点自保转向双人协商：仍坚持现实判断，但开始学习让渡、信任与共同承担。",
-        extra ? `补充约束已吸收：${extra}。` : "当前版本优先可读与一致性，细节风格将在后续重生成中增强。",
-      ].join(""),
+      mbti: profilePreset.mbti,
+      enneagram: profilePreset.enneagram,
+      instinctual_variant: profilePreset.instinctual_variant,
+      profile_body: profileBody,
     },
-    world_slice: "世界层面处于持续摩擦态：秩序压力与个人欲望并存，关系推进必须支付现实成本，因此每一次靠近都伴随风险评估与代价累积。",
-    mc_intel: "MC当前能看到的是可靠与克制，看不到的是男主对失控的恐惧与对关系代价的预判；这种信息差会驱动后续冲突与确认节奏。",
-    relationship_dynamics: "关系初态并非纯甜或纯虐，而是吸引与防御并行：靠近会触发边界协商，边界被尊重时亲密推进，边界被误读时冲突放大。",
-    axis_mapping: picked.length
-      ? picked.map((s) => `围绕${s.axis}轴（${s.option}）做中度映射，保持与其他轴同向，不反向抵消。`)
-      : [
-          "围绕已选轴建立人物动机、关系拉扯与现实代价的三层联动。",
-          "优先保证结构可用，再做文风和冲突强度优化。",
-          "避免模板式堆砌，强调因果链连续性。",
-          "保留后续重生成扩展空间。",
-        ],
-    tradeoff_notes: "本版为稳定兜底稿：优先确保可读、完整与约束一致，暂不追求极致文风。",
+    world_slice: `${worldTone.name}不是背景板，而是关系成本本身：${worldTone.summary}。${worldTone.pressure}会持续改写角色选择与关系推进节奏。`,
+    mc_intel: `MC可见层面是“${dynamicTone.visible}”，不可见层面是“${roleTone.hidden}”。这种信息差会在关键节点把关系从吸引推向协商或冲突。`,
+    relationship_dynamics: `关系初态呈现${dynamicTone.summary}：靠近时带着边界试探，拉开时带着未说出口的占有与保护。${motiveTone.summary}`,
+    axis_mapping: axisMapping,
+    tradeoff_notes: `本版优先保证可用性与一致性：先稳住${worldTone.name}下的关系逻辑，再逐轮提高文风密度与冲突颗粒度。`,
     regen_suggestion: extra
-      ? `下轮建议保留“${extra.slice(0, 80)}”并补充禁写项与开场镜头关键词。`
-      : "下轮建议补充禁写项、冲突阈值和开场场景关键词以提升贴脸度。",
-    opening_scene: "雨夜里，风把霓虹切成碎片。我站在檐下看他从街角走来，脚步很稳，像先把所有风险都算过一遍。他停在一步之外，没有碰我，也没有先解释迟到，只低声问：‘你现在最需要我做什么？’那一瞬我忽然明白，他不是不会表达，而是每一次靠近都要先穿过现实这道门。我们要面对的从来不只是喜欢与否，而是谁愿意先承认：这段关系天生带着代价。",
+      ? `下轮保留“${extra.slice(0, 80)}”，再补充禁写项、开场镜头关键词和冲突阈值。`
+      : `下轮建议补充禁写项、开场镜头关键词，并明确${dynamicTone.summary}的上限与边界。`,
+    opening_scene: openingScene,
   };
 
   if (mode === "timeline") {
-    base.timeline = "第一幕建立关系与现实阻力；第二幕误读叠加并支付代价；第三幕做出不可逆选择并完成终局回收。";
-    base.ending_payoff = "终局与已选终局相关轴同向兑现：明确谁失去什么、关系保留什么、代价如何落地。";
+    base.timeline = `第一幕：在${worldTone.name}下建立关系吸引与边界试探。第二幕：${motiveTone.core}与现实秩序正面冲突，双方开始支付代价。第三幕：围绕${dynamicTone.summary}完成不可逆选择，并回收情感与现实后果。`;
+    base.ending_payoff = `终局兑现遵循已选终局相关轴：既给出关系走向，也明确代价落点。核心回收点是“${roleTone.shadow}”是否被转化为可共同承担的选择。`;
   }
 
-  return enforceTemplateShape(base, mode, selections);
+  return enforceTemplateShape(base, mode, picked);
+}
+
+const WORLD_BY_W = {
+  W1: { name: "铁律秩序", summary: "规训高于情感、身份高于个人", pressure: "制度与家族规则", scene: "规章像玻璃墙一样竖在每个人面前" },
+  W2: { name: "废墟求生场", summary: "生存先于浪漫、资源决定关系强度", pressure: "物资稀缺与持续威胁", scene: "风里带着灰烬味，街道每一段都像临时战壕" },
+  W3: { name: "虚无繁荣带", summary: "物质充裕但情绪失真、关系失重", pressure: "精神倦怠与意义真空", scene: "灯光很亮，但每张脸都像隔着一层雾" },
+  W4: { name: "暗面都市", summary: "白昼秩序与夜间秘密并行", pressure: "表层规则与地下网络双重拉扯", scene: "夜色落下后，城市的第二套规则才开始运转" },
+  W5: { name: "未知边境", summary: "探索与不确定共同推动关系", pressure: "陌生环境与认知盲区", scene: "地图边缘总在后退，脚下每一步都需要重新命名" },
+  W6: { name: "竞逐修罗场", summary: "亲密与竞争共存、信任与博弈同频", pressure: "同赛道对抗与胜负后果", scene: "看台上的掌声和嘘声都在逼人站队" },
+};
+
+const BODY_BY_B = {
+  B1: { summary: "凡人脆弱", fact: "会受伤、会疲惫、会死", texture: "真实痛觉与时间损耗" },
+  B2: { summary: "异质身体", fact: "拥有非人结构与感知偏差", texture: "亲密边界天然复杂" },
+  B3: { summary: "超越肉体", fact: "以概念或系统形态存在", texture: "接近与失去都更抽象也更危险" },
+};
+
+const ROLE_BY_R = {
+  R1: { core: "秩序维护者的自我约束", hidden: "他在规则内替你挡掉代价", shadow: "对失控的零容忍" },
+  R2: { core: "破局者的进攻性生存", hidden: "他会先替你踩线再解释后果", shadow: "把爱与毁灭绑定在同一动作里" },
+  R3: { core: "被放逐者的防御性忠诚", hidden: "他把接纳视为稀缺资源", shadow: "下意识预设被抛弃并提前反击" },
+};
+
+const DYNAMIC_BY_D = {
+  D1: { core: "上位者主动收束权力", summary: "高位与低头并存", behavior: "克制主导", visible: "表面强势但会给你选择权" },
+  D2: { core: "下位者越界保护", summary: "服从外壳下的占有与反扑", behavior: "顺从姿态里的控制欲", visible: "看似退让却悄悄掌握关键入口" },
+  D3: { core: "势均力敌的互相校准", summary: "亲密与对抗同时在线", behavior: "拉扯式协商", visible: "每一步靠近都伴随一次反向试探" },
+};
+
+const MOTIVE_BY_M = {
+  M1: { core: "完成外部使命", summary: "责任优先但会被关系改写" },
+  M2: { core: "修补旧创伤", summary: "过去牵引现在，关系成为再选择现场" },
+  M3: { core: "主动觉醒与自我选择", summary: "不再被动服从命运，愿意承担主观选择后果" },
+  M4: { core: "攀升与掌控欲", summary: "野心驱动亲密，亲密反过来暴露软肋" },
+};
+
+const EXPRESSION_BY_E = {
+  E1: { style: "克制闷骚：嘴上保留、行动先到" },
+  E2: { style: "语言先行：擅长试探与诱导" },
+  E3: { style: "直球表达：情绪来时不过滤" },
+  E4: { style: "占有标记：强调边界和唯一性" },
+  E5: { style: "照料型投入：把爱放在日常细节里" },
+};
+
+const GAZE_BY_V = {
+  V1: { view: "锚点" },
+  V2: { view: "止痛药" },
+  V3: { view: "劫数" },
+  V4: { view: "猎物到例外" },
+};
+
+const OPENING_VARIANTS = [
+  {
+    lead: "雨落得很细，{world}。我在路口等他，远处的灯牌把他的影子切成几段。",
+    close: "他开口时声音很低，像把锋利收回去一寸：‘你只要告诉我，今晚谁能靠近你。’",
+  },
+  {
+    lead: "夜风穿过高楼缝隙时，{world}。他从人群背面走来，神情平静得近乎冷淡。",
+    close: "他没有先解释迟到，只先确认一句：‘你现在希望我站在门外，还是门里。’",
+  },
+  {
+    lead: "街面还亮着，{world}。他在你一步之外停下，手指微微收紧又放开。",
+    close: "你听见他几乎是贴着空气说：‘我可以退，但我不会把你交给别人。’",
+  },
+];
+
+function normalizeSelectionInfo(sel = {}) {
+  const axis = String(sel.axis || "").trim().toUpperCase();
+  const option = String(sel.option || "").trim();
+  const code = extractOptionCode(option, axis);
+  return { axis, option, code };
+}
+
+function extractOptionCode(option = "", axis = "") {
+  const m = String(option).trim().match(/^([A-Z]\d)\b/);
+  if (m?.[1]) return m[1];
+  if (axis === "PALETTE") return "PALETTE";
+  return axis || "";
+}
+
+function stableSeedFromSelections(infos = []) {
+  const key = infos.map((x) => `${x.axis}:${x.code}:${x.option}`).join("|");
+  let seed = 0;
+  for (let i = 0; i < key.length; i++) seed = (seed * 31 + key.charCodeAt(i)) >>> 0;
+  return seed || 1;
+}
+
+function stablePick(arr = [], seed = 1) {
+  if (!Array.isArray(arr) || arr.length === 0) return "";
+  return arr[Math.abs(Number(seed || 1)) % arr.length];
+}
+
+function emergencyLookup(map, code, fallbackCode) {
+  return map?.[code] || map?.[fallbackCode] || {};
+}
+
+function axisMappingHintByAxis(info) {
+  const axis = String(info?.axis || "");
+  const code = String(info?.code || "");
+  if (axis === "W") return `${emergencyLookup(WORLD_BY_W, code, "W3").summary || "强调外部环境与关系成本绑定"}`;
+  if (axis === "B") return `${emergencyLookup(BODY_BY_B, code, "B1").summary || "强调身体边界与亲密方式联动"}`;
+  if (axis === "R") return `${emergencyLookup(ROLE_BY_R, code, "R3").core || "强调身份立场对关系伦理的影响"}`;
+  if (axis === "D") return `${emergencyLookup(DYNAMIC_BY_D, code, "D2").summary || "强调权力结构与边界协商同步"}`;
+  if (axis === "M") return `${emergencyLookup(MOTIVE_BY_M, code, "M2").summary || "强调动机与行为后果一体化"}`;
+  if (axis === "E") return `${emergencyLookup(EXPRESSION_BY_E, code, "E1").style || "强调表达方式与误读成本"}`;
+  if (axis === "V") return `强调“${emergencyLookup(GAZE_BY_V, code, "V1").view || "凝视对象"}”如何改变关系重心`;
+  return "保持该轴与其余选轴同向，不做反向抵消";
+}
+
+function emergencyProfilePreset({ d = "", r = "", m = "", e = "", v = "" } = {}) {
+  if (d === "D2" || r === "R3") return { mbti: "ISTJ", enneagram: "6w5", instinctual_variant: "sp/sx" };
+  if (m === "M4") return { mbti: "ENTJ", enneagram: "3w4", instinctual_variant: "so/sx" };
+  if (e === "E3" || v === "V1") return { mbti: "ENFJ", enneagram: "2w3", instinctual_variant: "sx/so" };
+  return { mbti: "INTJ", enneagram: "5w4", instinctual_variant: "sp/sx" };
 }
 
 function renderStructuredMarkdown(obj, mode) {

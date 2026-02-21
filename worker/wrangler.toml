@@ -5,6 +5,8 @@ compatibility_date = "2025-01-01"
 [vars]
 OPENAI_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 PRIMARY_MODEL = "glm-5"
+MINIMAX_API_URL = "https://api.minimax.chat/v1/chat/completions"
+MINIMAX_MODEL = "MiniMax-M2.5"
 FALLBACK_MODEL = ""
 ALLOW_MODEL_FALLBACK = "false"
 ENABLE_EMERGENCY_FALLBACK = "true"
