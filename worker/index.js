@@ -28,7 +28,7 @@ async function handleGenerateJson(request, env) {
     const result = await runGeneration(body, env);
     return json({ content: result.content, meta: result.meta }, 200);
   } catch (err) {
-    if (shouldEmergencyFallback(err)) {
+    if (isEmergencyFallbackEnabled(env) && shouldEmergencyFallback(err)) {
       const emergency = buildEmergencyResult(body, `degraded:${err?.name || "error"}:${err?.message || "upstream"}`);
       return json({ content: emergency.content, meta: emergency.meta }, 200);
     }
@@ -78,7 +78,7 @@ async function handleGenerateStream(request, env, ctx) {
         meta: result.meta,
       });
     } catch (err) {
-      if (shouldEmergencyFallback(err)) {
+      if (isEmergencyFallbackEnabled(env) && shouldEmergencyFallback(err)) {
         const emergency = buildEmergencyResult(body, `degraded:${err?.name || "error"}:${err?.message || "upstream"}`);
         await send({ type: "done", content: emergency.content, meta: emergency.meta });
       } else {
@@ -137,7 +137,7 @@ async function runGeneration(body, env, hooks = {}) {
   const systemPrompt = buildSystemPrompt(mode);
   const userPrompt = buildUserPrompt(selections, extraPrompt, mode);
 
-  const fallbackModel = (env.FALLBACK_MODEL || "").trim();
+  const fallbackModel = isModelFallbackEnabled(env) ? (env.FALLBACK_MODEL || "").trim() : "";
   let finalModel = model;
   let repaired = false;
 
@@ -363,7 +363,7 @@ function mapError(err) {
       status: 504,
       code: "UPSTREAM_TIMEOUT",
       message:
-        "模型响应超时（已自动重试/降级）。通常是上游拥塞或当前提示较重；请重试。",
+        "模型响应超时。通常是上游拥塞或提示较重；请稍后重试。",
     };
   }
 
@@ -372,7 +372,7 @@ function mapError(err) {
     return {
       status: 524,
       code: "UPSTREAM_524_TIMEOUT",
-      message: "上游模型网关超时（524）。已做自动重试，仍失败。通常是模型端拥塞或生成过长，请稍后重试。",
+      message: "上游模型网关超时（524）。通常是模型端拥塞或生成过长，请稍后重试。",
     };
   }
 
@@ -381,6 +381,19 @@ function mapError(err) {
     code: err?.code || "UNEXPECTED_ERROR",
     message: err?.message || "Unexpected error",
   };
+}
+
+function parseBoolEnv(v, defaultValue = false) {
+  if (v == null || v === "") return defaultValue;
+  return ["1", "true", "yes", "on"].includes(String(v).trim().toLowerCase());
+}
+
+function isModelFallbackEnabled(env) {
+  return parseBoolEnv(env?.ALLOW_MODEL_FALLBACK, true);
+}
+
+function isEmergencyFallbackEnabled(env) {
+  return parseBoolEnv(env?.ENABLE_EMERGENCY_FALLBACK, true);
 }
 
 function shouldEmergencyFallback(err) {

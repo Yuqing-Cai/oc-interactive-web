@@ -98,7 +98,7 @@ const sideRainRight = document.getElementById("sideRainRight");
 
 const FIXED_API_URL = "https://oc-interactive-web-api.lnln2004.workers.dev/generate";
 const FIXED_MODEL = "glm-5";
-const REQUEST_TIMEOUT_MS = 75000;
+const REQUEST_TIMEOUT_MS = 140000;
 const DEBUG_TRACE = new URLSearchParams(window.location.search).get("debug") === "1";
 const defaultTheme = "cyan";
 if (themeSelect) {
@@ -315,30 +315,14 @@ async function generate(isRegenerate) {
         const jsonResult = await requestGenerateJson(apiUrl, payload, REQUEST_TIMEOUT_MS);
         finalContent = jsonResult.content || "";
         finalMeta = jsonResult.meta || null;
-      } catch {
-        liveTrace.push({ stage: "json_failed_fallback_local", t: Math.floor(performance.now() - startedAt) });
-        finalContent = buildLocalEmergencyContent(selections, extraPrompt, mode);
-        finalMeta = {
-          mode,
-          repaired: true,
-          trace: liveTrace,
-          totalMs: Math.floor(performance.now() - startedAt),
-          finalModel: "frontend-local-fallback",
-          fallbackUsed: true,
-        };
+      } catch (jsonErr) {
+        liveTrace.push({ stage: "json_failed_hard_error", t: Math.floor(performance.now() - startedAt) });
+        throw jsonErr;
       }
     }
 
     if (!finalContent) {
-      finalContent = buildLocalEmergencyContent(selections, extraPrompt, mode);
-      finalMeta = finalMeta || {
-        mode,
-        repaired: true,
-        trace: liveTrace,
-        totalMs: Math.floor(performance.now() - startedAt),
-        finalModel: "frontend-local-fallback",
-        fallbackUsed: true,
-      };
+      throw new Error("服务端未返回最终内容。");
     }
 
     resultEl.innerHTML = renderResultContent(finalContent);
@@ -558,7 +542,7 @@ function formatTrace(trace = [], repaired = false, mode = "", totalMs = 0, extra
     alignment_repair_applied: "重写已应用",
     alignment_repair_failed: "重写失败",
     stream_failed_fallback_json: "流式失败，切换稳态通道",
-    json_failed_fallback_local: "稳态通道失败，启用本地应急",
+    json_failed_hard_error: "稳态通道失败，直接报错",
     upstream_error: "模型请求失败",
     completed: "生成完成",
   };
