@@ -599,8 +599,7 @@ function parseStructuredOutput(raw, mode) {
   }
 
   const iv = normalizeInstinctVariant(obj.male_profile.instinctual_variant) || extractInstinctFromText(mergedProfileText);
-  if (!iv) return { ok: false, reason: "副型非法" };
-  obj.male_profile.instinctual_variant = iv;
+  obj.male_profile.instinctual_variant = iv || "sp/sx";
 
   const requiredTextFields = [
     ["overview", 80],
