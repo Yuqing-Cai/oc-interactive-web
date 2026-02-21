@@ -361,7 +361,13 @@ async function runGenerationSingle(body, env, hooks = {}) {
 
     if (!structured.ok) {
       const parseFailReason = structured.reason || "parse_failed";
-      const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, cleanedRawContent, mode);
+      let coerced = null;
+      try {
+        coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, cleanedRawContent, mode);
+      } catch (err) {
+        // JSON 修复器超时/失败不应拖垮主流程，直接回退到本地结构化合成。
+        mark("structured_parse_coerce_failed", { error: err?.name || "error" });
+      }
       if (coerced) {
         structured = { ok: true, value: coerced };
         repaired = true;
@@ -979,6 +985,12 @@ function looksLikeReasoningLeak(text) {
 function stripReasoningScaffold(text) {
   if (!text) return "";
   let out = String(text);
+
+  // 去除显式思维链标签（不同供应商常见）
+  out = out
+    .replace(/<think>[\s\S]*?<\/think>/gi, "\n")
+    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "\n")
+    .replace(/```(?:thinking|analysis|reasoning)[\s\S]*?```/gi, "\n");
 
   // 典型“先分析再输出”脚手架段落，直接移除
   out = out
