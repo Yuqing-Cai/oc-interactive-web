@@ -183,18 +183,23 @@ async function runGeneration(body, env, hooks = {}) {
     : userPrompt;
 
   // 主生成：总预算内执行，避免长尾拖死。
+  const supportsJsonSchema = !String(apiUrl).includes("bigmodel.cn");
   const payload = {
     model,
     temperature: 0.62,
     max_tokens: mode === "timeline" ? 2200 : 1600,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "oc_profile",
-        strict: true,
-        schema: buildOutputSchema(mode),
-      },
-    },
+    ...(supportsJsonSchema
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "oc_profile",
+              strict: true,
+              schema: buildOutputSchema(mode),
+            },
+          },
+        }
+      : {}),
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: finalUserPrompt },
@@ -859,6 +864,7 @@ function normalizeJsonLikeContent(raw) {
 
 
 async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
+  const supportsJsonSchema = !String(apiUrl).includes("bigmodel.cn");
   const prompt = [
     "你是JSON修复器。把输入内容修复/转换成严格符合给定JSON Schema的对象。",
     "仅输出JSON对象，不要解释，不要markdown。",
@@ -879,14 +885,18 @@ async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
         model,
         temperature: 0.2,
         max_tokens: mode === "timeline" ? 2400 : 1700,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "oc_profile",
-            strict: true,
-            schema: buildOutputSchema(mode),
-          },
-        },
+        ...(supportsJsonSchema
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "oc_profile",
+                  strict: true,
+                  schema: buildOutputSchema(mode),
+                },
+              },
+            }
+          : {}),
         messages: [
           { role: "system", content: "你是严格JSON修复器，仅输出合法JSON。" },
           { role: "user", content: prompt },
@@ -905,6 +915,7 @@ async function coerceToSchemaJson(apiUrl, apiKey, model, rawContent, mode) {
 
 
 async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPrompt, previousObj, issues, mode) {
+  const supportsJsonSchema = !String(apiUrl).includes("bigmodel.cn");
   const res = await fetchWithTimeout(
     apiUrl,
     {
@@ -917,14 +928,18 @@ async function regenerateWithIssues(apiUrl, apiKey, model, systemPrompt, userPro
         model,
         temperature: 0.45,
         max_tokens: mode === "timeline" ? 2200 : 1600,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "oc_profile",
-            strict: true,
-            schema: buildOutputSchema(mode),
-          },
-        },
+        ...(supportsJsonSchema
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "oc_profile",
+                  strict: true,
+                  schema: buildOutputSchema(mode),
+                },
+              },
+            }
+          : {}),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
