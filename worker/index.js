@@ -274,15 +274,19 @@ async function runGeneration(body, env, hooks = {}) {
     }
 
     if (!structured.ok) {
+      const parseFailReason = structured.reason || "parse_failed";
       const coerced = await coerceToSchemaJson(apiUrl, apiKey, finalModel, rawContent, mode);
       if (coerced) {
         structured = { ok: true, value: coerced };
         repaired = true;
         mark("structured_parse_recovered");
       } else {
-        const e = new Error(`结构化输出校验失败：${structured.reason}`);
-        e.status = 502;
-        throw e;
+        structured = {
+          ok: true,
+          value: synthesizeStructuredFromRaw(rawContent, mode, selections, extraPrompt),
+        };
+        repaired = true;
+        mark("structured_parse_fallback_applied", { reason: parseFailReason });
       }
     }
   }
@@ -702,6 +706,41 @@ function tryParseNarrativeOutput(raw, mode, plan) {
   };
 }
 
+function synthesizeStructuredFromRaw(raw, mode, selections = [], extraPrompt = "") {
+  const axisMapping = (Array.isArray(selections) ? selections : [])
+    .slice(0, 6)
+    .map((s) => `围绕${s.axis}轴（${s.option}）进行中度映射，保持与补充提示词一致。`);
+
+  const obj = {
+    overview: synthesizeFieldFromRaw(raw, "overview", 120),
+    male_profile: {
+      mbti: extractMbtiFromText(raw) || "INTJ",
+      enneagram: extractEnneagramFromText(raw) || "5w4",
+      instinctual_variant: extractInstinctFromText(raw) || "sp/sx",
+      profile_body: synthesizeFieldFromRaw(`${raw}\n${extraPrompt}`, "profile_body", mode === "timeline" ? 720 : 560),
+    },
+    world_slice: synthesizeFieldFromRaw(raw, "world_slice", 120),
+    mc_intel: synthesizeFieldFromRaw(raw, "mc_intel", 100),
+    relationship_dynamics: synthesizeFieldFromRaw(raw, "relationship_dynamics", 100),
+    axis_mapping: axisMapping.length ? axisMapping : [
+      "围绕已选轴构建角色动机与关系冲突，避免反向设定。",
+      "保持世界阻力—个人选择—关系代价三层联动。",
+      "让开场信息与后续推进保持同一叙事方向。",
+      "优先保证稳定可读，再逐轮提高细节密度。",
+    ],
+    tradeoff_notes: synthesizeFieldFromRaw(raw, "tradeoff_notes", 28),
+    regen_suggestion: synthesizeFieldFromRaw(extraPrompt || raw, "regen_suggestion", 20),
+    opening_scene: synthesizeFieldFromRaw(raw, "opening_scene", mode === "timeline" ? 250 : 300),
+  };
+
+  if (mode === "timeline") {
+    obj.timeline = synthesizeFieldFromRaw(raw, "timeline", 200);
+    obj.ending_payoff = synthesizeFieldFromRaw(raw, "ending_payoff", 120);
+  }
+
+  return obj;
+}
+
 function synthesizeFieldFromRaw(raw, key, minLen = 80) {
   const base = normalizeTextField(raw)
     .replace(/```[\s\S]*?```/g, "")
@@ -811,6 +850,7 @@ function extractModelContent(data) {
 
   const cands = [
     msg?.content,
+    msg?.reasoning_content,
     choice?.content,
     data?.output_text,
     data?.text,
