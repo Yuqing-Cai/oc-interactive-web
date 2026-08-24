@@ -1,61 +1,24 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>OC 命运生成器</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <div class="container">
-    <div class="top-bar">
-      <button id="langToggle" class="lang-toggle" type="button">EN</button>
-    </div>
-    <h1>🎭 OC 命运生成器</h1>
-    <p class="subtitle">选择轴要素，一键生成男主设定与命运骨架</p>
-
-    <div id="axisContainer"></div>
-
-    <div class="control-grid">
-      <div class="control-row">
-        <div>
-          <label class="field-label">选择模型</label>
-          <select id="modelSelect" class="control-input"></select>
-        </div>
-        <div>
-          <label class="field-label">补充偏好（可选）</label>
-          <textarea id="extraPrompt" class="control-textarea" rows="6" placeholder="例如：&#10;- 世界观偏冷感赛博，但关系推进要克制&#10;- 男主不说教，不PUA，不浪子回头式洗白&#10;- 开场用雨夜、便利店、低照度灯箱&#10;- 强化时间代价与终局回收"></textarea>
-          <p class="prompt-note">支持多行输入。可写雷点、世界观偏好、情感边界、语气要求或你不想看到的内容。</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="controls">
-      <p id="selectedCount" class="selected-count">已选 0 项 · 结构轴 0 项</p>
-      <div class="btn-row">
-        <button id="luckyBtn" class="btn btn-secondary" type="button">🎲 帮我选轴</button>
-        <button id="generateBtn" class="btn">✨ 生成设定</button>
-      </div>
-    </div>
-
-    <div id="status" class="status"></div>
-
-    <div class="result-toolbar">
-      <div class="result-toolbar-title">生成结果</div>
-      <button id="copyBtn" type="button" class="ghost-btn" disabled>复制结果</button>
-    </div>
-    <div id="result" class="result-panel" style="display:none;"></div>
-
-    <footer>
-      <p>Code: MIT | Art/Content: 非商用学习用途</p>
-      <p><a href="https://github.com/Yuqing-Cai/oc-fate-generator">GitHub</a></p>
-    </footer>
-  </div>
-
-  <script src="axes-data.js"></script>
-  <script src="config.js"></script>
-  <script src="i18n.js"></script>
-  <script src="renderer.js"></script>
-  <script src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="用命运轴编织角色、关系与完整叙事弧线。"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0c1016" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    />
+    <title>命运轴 · OC Fate Loom</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>这个命运编织台需要启用 JavaScript 才能使用。</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>
